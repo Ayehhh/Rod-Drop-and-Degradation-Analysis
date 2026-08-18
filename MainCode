@@ -115,7 +115,7 @@ def collect_clearance_inputs():
 
 
 # ==============================================================================
-# 3. PROBE ORIENTATION / SIGN CONVENTION
+# 3. PROBE ORIENTATION / SIGN CONVENTION  // to remove
 # ==============================================================================
 
 ORIENTATION_OPTIONS = {
