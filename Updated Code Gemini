@@ -28,7 +28,7 @@ from google.colab import files
 # 1. USER INTERACTIVE INPUT CONFIGURATION
 # ==========================================
 print("=" * 65)
-print(" RECIPROCATING COMPRESSOR PROGNOSTIC ANALYSIS (GOOGLE COLAB)")
+print(" WELCOME TO RECIPROCATING COMPRESSOR ROD DROP PROGNOSTIC ANALYSIS")
 print("=" * 65)
 
 # 1. Upload Excel Data File via Browser
@@ -101,9 +101,9 @@ WEAR_TARGET_MIN = (NEW_CLEARANCE - MIN_CLEARANCE) * 1000.0
 
 print("\nParameters successfully updated!")
 print(f"   - As-New Clearance : {NEW_CLEARANCE:.3f} mm")
-print(f"   - L Setpoint       : {CLEARANCE_AT_L:.3f} mm ({BN_L_THRESHOLD} um wear)")
-print(f"   - LL Setpoint      : {CLEARANCE_AT_LL:.3f} mm ({BN_LL_THRESHOLD} um wear)")
-print(f"   - OEM Limit        : {MIN_CLEARANCE:.3f} mm ({WEAR_TARGET_MIN:.1f} um wear)")
+print(f"   - L Alarm Clearance Setpoint       : {CLEARANCE_AT_L:.3f} mm ({BN_L_THRESHOLD} um alarm threshold)")
+print(f"   - LL Alarm Clearance Setpoint      : {CLEARANCE_AT_LL:.3f} mm ({BN_LL_THRESHOLD} um alarm threshold)")
+print(f"   - OEM Limit        : {MIN_CLEARANCE:.3f} mm ({WEAR_TARGET_MIN:.1f} um alarm threshold)")
 print(f"   - Confidence Band  : {CONFIDENCE_PCT:.1f}%\n")
 
 # ==========================================
@@ -196,7 +196,7 @@ f_L = solve_crossing(best, WEAR_TARGET_L, CONFIDENCE_PCT, max_horizon)
 f_LL = solve_crossing(best, WEAR_TARGET_LL, CONFIDENCE_PCT, max_horizon)
 f_Min = solve_crossing(best, WEAR_TARGET_MIN, CONFIDENCE_PCT, max_horizon)
 
-print("\nPROGNOSTIC BREACH PROJECTIONS:")
+print("\nDEGRADATION ANALYSIS:")
 print("-" * 55)
 for label, (e, c, l) in [("L Alarm", f_L), ("LL Alarm", f_LL), ("Min Clearance", f_Min)]:
     c_date = (t0 + timedelta(days=c)).strftime('%Y-%m-%d') if c else "N/A"
@@ -281,7 +281,7 @@ BOLD_FONT = Font(name="Calibri", size=11, bold=True)
 REGULAR_FONT = Font(name="Calibri", size=11)
 
 ws1.merge_cells("B2:G2")
-ws1["B2"] = "PISTON ROD CLEARANCE PROGNOSTIC REPORT"
+ws1["B2"] = "PISTON ROD DROP CLEARANCE DEGRADATION AND PROGNOSTIC ANALYSIS REPORT"
 ws1["B2"].font = TITLE_FONT
 ws1["B2"].fill = NAVY_FILL
 ws1["B2"].alignment = Alignment(horizontal="center", vertical="center")
@@ -291,11 +291,12 @@ ws1.merge_cells("B4:D4")
 ws1["B4"] = "TECHNICAL SPECIFICATIONS & THRESHOLDS"
 ws1["B4"].font = HEADER_FONT
 ws1["B4"].fill = STEEL_FILL
+ws1["B4"].alignment = Alignment(horizontal="center", vertical="center")
 
 params = [
-    ("As-New Rider Ring Clearance", NEW_CLEARANCE, "mm"),
-    ("Bently Nevada L Alarm Wear", BN_L_THRESHOLD, "um"),
-    ("Bently Nevada LL Alarm Wear", BN_LL_THRESHOLD, "um"),
+    ("As-Left Bottom Piston-to-Liner Clearance", NEW_CLEARANCE, "mm"),
+    ("Bently Nevada L Alarm Threshold", BN_L_THRESHOLD, "um"),
+    ("Bently Nevada LL Alarm Threshold", BN_LL_THRESHOLD, "um"),
     ("Minimum Allowable Clearance (OEM)", MIN_CLEARANCE, "mm"),
     ("Calculated L Clearance Limit", CLEARANCE_AT_L, "mm"),
     ("Calculated LL Clearance Limit", CLEARANCE_AT_LL, "mm"),
@@ -316,8 +317,9 @@ ws1.merge_cells("B13:G13")
 ws1["B13"] = "PROGNOSTIC BREACH PROJECTION SUMMARY"
 ws1["B13"].font = HEADER_FONT
 ws1["B13"].fill = STEEL_FILL
+ws1["B13"].alignment = Alignment(horizontal="center", vertical="center")
 
-headers = ["Threshold Level", "Wear Target (um)", "Clearance Target (mm)", "Early Breach Date", "Expected Breach Date", "Conservative Date"]
+headers = ["Threshold Level", "Alarm Threshold (um)", "Estimated Calculated Clearance (mm)", "Earliest Predicted Date", "Expected Predcited Date", "Latest Predicted Date"]
 for col_num, h in enumerate(headers, start=2):
     c = ws1.cell(row=14, column=col_num, value=h)
     c.font = HEADER_FONT
@@ -327,7 +329,7 @@ for col_num, h in enumerate(headers, start=2):
 prognostic_rows = [
     ("Bently Nevada L Alarm", WEAR_TARGET_L, CLEARANCE_AT_L, f_L),
     ("Bently Nevada LL Alarm", WEAR_TARGET_LL, CLEARANCE_AT_LL, f_LL),
-    ("Minimum Clearance (OEM)", WEAR_TARGET_MIN, MIN_CLEARANCE, f_Min)
+    ("Minimum Allowable Clearance (OEM)", WEAR_TARGET_MIN, MIN_CLEARANCE, f_Min)
 ]
 
 for row_idx, (level, w_tgt, c_tgt, dates_tuple) in enumerate(prognostic_rows, start=15):
