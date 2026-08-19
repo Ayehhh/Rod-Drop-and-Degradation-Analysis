@@ -74,13 +74,9 @@ else:
         CONFIDENCE_PCT = 95.0
 
 # 3. Output Directory Prompt
-print("\n--- Enter Output Directory Configuration ---")
-default_dir = "Prognosis_Output_Files"
-OUTPUT_DIR = input(f"Enter directory path to save outputs [{default_dir}]: ").strip() or default_dir
-
-# Create output directory if it doesn't exist
+OUTPUT_DIR = "Prognosis_Output_Files"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-print(f"Output files will be saved in directory: '{os.path.abspath(OUTPUT_DIR)}'")
+print(f"\nOutput directory auto-set to: '{os.path.abspath(OUTPUT_DIR)}'")
 
 # Calculate Targets Based on User Input
 CLEARANCE_AT_L = NEW_CLEARANCE - (abs(BN_L_THRESHOLD) / 1000.0)
@@ -304,10 +300,10 @@ for idx, (param, val, unit) in enumerate(params, start=5):
     ws1.cell(row=idx, column=4, value=unit).font = REGULAR_FONT
 
 ws1.merge_cells("B13:G13")
-ws1["B14"] = "PROGNOSTIC BREACH PROJECTION SUMMARY"
-ws1["B14"].font = HEADER_FONT
-ws1["B14"].fill = STEEL_FILL
-ws1["B14"].alignment = Alignment(horizontal="center", vertical="center")
+ws1["B13"] = "PROGNOSTIC BREACH PROJECTION SUMMARY"
+ws1["B13"].font = HEADER_FONT
+ws1["B13"].fill = STEEL_FILL
+ws1["B13"].alignment = Alignment(horizontal="center", vertical="center")
 
 headers = ["Threshold Level", "Alarm Threshold (um)", "Estimated Calculated Clearance (mm)", "Earliest Predicted Date", "Expected Predcited Date", "Latest Predicted Date"]
 for col_num, h in enumerate(headers, start=2):
@@ -395,14 +391,20 @@ for col in ws2.columns:
     col_letter = get_column_letter(col[0].column)
     ws2.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-# Save Excel report into designated directory
-output_excel_path = os.path.join(OUTPUT_DIR, "Piston_Rod_Clearance_Prognostic_Report_EN.xlsx")
+# ==========================================
+# SAVING PROCESS & AUTO DOWNLOAD ZIP FILE
+# ==========================================
+# 1. Save Excel into Ouput File
+timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+output_excel_path = os.path.join(OUTPUT_DIR, f"Piston_Rod_Clearance_Prognostic_Report_{timestamp_str}.xlsx")
 wb.save(output_excel_path)
-print(f"Analysis complete! Excel report saved to directory: {output_excel_path}")
+print(f"\nAnalysis complete! Excel report saved to directory: {output_excel_path}")
 
-# Zip output folder and trigger download
+# 2. Output Folder become Zip
 zip_filename = f"{OUTPUT_DIR}.zip"
 shutil.make_archive(OUTPUT_DIR, 'zip', OUTPUT_DIR)
 print(f"Compressed output folder saved as: {zip_filename}")
+
+# 3. Trigger Download
 print("Downloading ZIP archive containing all outputs to your machine...")
 files.download(zip_filename)
