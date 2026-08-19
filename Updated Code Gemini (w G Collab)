@@ -1,13 +1,3 @@
-"""
-Reciprocating Compressor Piston Rod Clearance Prognostic Analysis
------------------------------------------------------------------
-This script performs non-linear statistical regression modeling on rod drop/wear
-data to project exact breach dates for Bently Nevada 3500 alarm limits (L / LL)
-and OEM minimum allowable clearance thresholds.
-
-Designed for Google Colab Execution with Custom Output Directory Support.
-"""
-
 import os
 import shutil
 import openpyxl
@@ -281,7 +271,7 @@ BOLD_FONT = Font(name="Calibri", size=11, bold=True)
 REGULAR_FONT = Font(name="Calibri", size=11)
 
 ws1.merge_cells("B2:G2")
-ws1["B2"] = "PISTON ROD DROP CLEARANCE DEGRADATION AND PROGNOSTIC ANALYSIS REPORT"
+ws1["B2"] = "DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR PISTON ROD DROP AND ESTIMATED CLEARANCE"
 ws1["B2"].font = TITLE_FONT
 ws1["B2"].fill = NAVY_FILL
 ws1["B2"].alignment = Alignment(horizontal="center", vertical="center")
@@ -314,10 +304,10 @@ for idx, (param, val, unit) in enumerate(params, start=5):
     ws1.cell(row=idx, column=4, value=unit).font = REGULAR_FONT
 
 ws1.merge_cells("B13:G13")
-ws1["B13"] = "PROGNOSTIC BREACH PROJECTION SUMMARY"
-ws1["B13"].font = HEADER_FONT
-ws1["B13"].fill = STEEL_FILL
-ws1["B13"].alignment = Alignment(horizontal="center", vertical="center")
+ws1["B14"] = "PROGNOSTIC BREACH PROJECTION SUMMARY"
+ws1["B14"].font = HEADER_FONT
+ws1["B14"].fill = STEEL_FILL
+ws1["B14"].alignment = Alignment(horizontal="center", vertical="center")
 
 headers = ["Threshold Level", "Alarm Threshold (um)", "Estimated Calculated Clearance (mm)", "Earliest Predicted Date", "Expected Predcited Date", "Latest Predicted Date"]
 for col_num, h in enumerate(headers, start=2):
