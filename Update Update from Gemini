@@ -1,0 +1,387 @@
+# Re-run script to generate exact same Excel files with English headers and titles.
+import os
+import numpy as np
+import pandas as pd
+from datetime import datetime, timedelta
+from scipy import stats
+from scipy.optimize import curve_fit, brentq
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.drawing.image import Image
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+np.random.seed(42)
+start_date = datetime(2025, 1, 1)
+days_span = 360
+timestamps = [start_date + timedelta(days=i*3) for i in range(days_span // 3)]
+days_arr = np.array([(ts - start_date).days for ts in timestamps])
+wear_sim = 15.0 + 0.85 * days_arr + 0.0005 * (days_arr**1.8) + np.random.normal(0, 3.0, len(days_arr))
+raw_readings = -wear_sim
+
+df_sample = pd.DataFrame({
+    "TIMESTAMP": timestamps,
+    "ROD_DROP_UM": raw_readings
+})
+
+excel_input_path = "sample_rod_drop_data.xlsx"
+df_sample.to_excel(excel_input_path, index=False)
+
+NEW_CLEARANCE = 14.820       # mm
+BN_L_THRESHOLD = 300.0       # um
+BN_LL_THRESHOLD = 500.0      # um
+MIN_CLEARANCE = 14.200       # mm
+CONFIDENCE_PCT = 95.0
+
+CLEARANCE_AT_L = NEW_CLEARANCE - (abs(BN_L_THRESHOLD) / 1000.0)
+CLEARANCE_AT_LL = NEW_CLEARANCE - (abs(BN_LL_THRESHOLD) / 1000.0)
+WEAR_TARGET_L = abs(BN_L_THRESHOLD)
+WEAR_TARGET_LL = abs(BN_LL_THRESHOLD)
+WEAR_TARGET_MIN = (NEW_CLEARANCE - MIN_CLEARANCE) * 1000.0
+
+def _lin(x, a, b): return a * x + b
+def _quad(x, a, b, c): return a * x**2 + b * x + c
+def _power(x, a, b): return a * np.power(np.maximum(x, 1e-6), b)
+def _expo(x, a, b): return a * np.exp(np.clip(b * x, -100, 100))
+def _logf(x, a, b): return a * np.log(x + 1.0) + b
+
+MODELS = {
+    "Linear": (_lin, [1.0, 0.0]),
+    "Quadratic": (_quad, [0.01, 1.0, 0.0]),
+    "Power": (_power, [1.0, 1.0]),
+    "Exponential": (_expo, [1.0, 0.01]),
+    "Logarithmic": (_logf, [1.0, 0.0])
+}
+
+df = pd.read_excel(excel_input_path)
+df.columns = ["timestamp", "raw_um"]
+df["timestamp"] = pd.to_datetime(df["timestamp"])
+df["raw_um"] = pd.to_numeric(df["raw_um"], errors="coerce")
+df = df.dropna().sort_values("timestamp").reset_index(drop=True)
+
+df["wear_um"] = -df["raw_um"]
+df["clearance_mm"] = NEW_CLEARANCE - (df["wear_um"] / 1000.0)
+
+t0 = df["timestamp"].iloc[0]
+days = (df["timestamp"] - t0).dt.total_seconds().values / 86400.0
+wear_um = df["wear_um"].values
+
+model_results = {}
+for name, (func, p0) in MODELS.items():
+    try:
+        popt, _ = curve_fit(func, days, wear_um, p0=p0, maxfev=10000)
+        y_pred = func(days, *popt)
+        ss_res = np.sum((wear_um - y_pred)**2)
+        ss_tot = np.sum((wear_um - np.mean(wear_um))**2)
+        r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+        dof = max(len(days) - len(popt), 1)
+        model_results[name] = {
+            "func": func, "popt": popt, "r2": r2,
+            "resid_std": np.sqrt(ss_res / dof), "dof": dof
+        }
+    except Exception:
+        pass
+
+best_name = max(model_results, key=lambda k: model_results[k]["r2"])
+best = model_results[best_name]
+
+def solve_crossing(model, target_wear, conf_pct, max_days=3650):
+    func, popt, dof, std = model["func"], model["popt"], model["dof"], model["resid_std"]
+    t_val = stats.t.ppf((1 + conf_pct / 100.0) / 2, dof) if dof >= 1 else 0.0
+    band = t_val * std
+
+    def get_date(f):
+        xs = np.linspace(0, max_days, 15000)
+        ys = f(xs)
+        idx = np.where(np.diff(np.sign(ys)) != 0)[0]
+        if len(idx) == 0: return None
+        try: return brentq(f, xs[idx[0]], xs[idx[0]+1])
+        except: return None
+
+    early = get_date(lambda x: func(x, *popt) + band - target_wear)
+    central = get_date(lambda x: func(x, *popt) - target_wear)
+    late = get_date(lambda x: func(x, *popt) - band - target_wear)
+    return early, central, late
+
+max_horizon = max(days[-1] * 4, days[-1] + 3650)
+f_L = solve_crossing(best, WEAR_TARGET_L, CONFIDENCE_PCT, max_horizon)
+f_LL = solve_crossing(best, WEAR_TARGET_LL, CONFIDENCE_PCT, max_horizon)
+f_Min = solve_crossing(best, WEAR_TARGET_MIN, CONFIDENCE_PCT, max_horizon)
+
+def fmt_d(t0, d_days):
+    return (t0 + timedelta(days=d_days)).strftime("%Y-%m-%d") if d_days is not None else "Out of Bounds"
+
+n_recent = min(5, len(df))
+avg_raw_curr = df["raw_um"].tail(n_recent).mean()
+avg_wear_curr = df["wear_um"].tail(n_recent).mean()
+curr_clearance = NEW_CLEARANCE - (avg_wear_curr / 1000.0)
+avg_wear_rate = (wear_um[-1] - wear_um[0]) / days[-1] if days[-1] > 0 else 0
+eps = 0.01
+inst_wear_rate = (best["func"](days[-1] + eps, *best["popt"]) - best["func"](days[-1] - eps, *best["popt"])) / (2 * eps)
+
+# Generate Plot in English
+fig, ax = plt.subplots(figsize=(10, 5.5), dpi=150)
+ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=22, alpha=0.8, label="Historical Observations (Measured)")
+
+candidate_days = [d for d in [f_L[1], f_LL[1], f_Min[1]] if d is not None]
+x_max_plot = max(candidate_days) * 1.15 if candidate_days else days[-1] * 2
+x_plot = np.linspace(0, x_max_plot, 500)
+y_wear_plot = best["func"](x_plot, *best["popt"])
+y_clear_plot = NEW_CLEARANCE - (y_wear_plot / 1000.0)
+dates_plot = [t0 + timedelta(days=d) for d in x_plot]
+
+t_val = stats.t.ppf((1 + CONFIDENCE_PCT / 100.0) / 2, best["dof"]) if best["dof"] >= 1 else 0.0
+band_mm = (t_val * best["resid_std"]) / 1000.0
+
+ax.plot(dates_plot, y_clear_plot, color="#d62728", linewidth=2, label=f"Best Fit Regression Model: {best_name} ($R^2={best['r2']:.4f}$)")
+ax.fill_between(dates_plot, y_clear_plot - band_mm, y_clear_plot + band_mm, color="#d62728", alpha=0.15, label=f"{CONFIDENCE_PCT:.0f}% Confidence Interval")
+
+ax.axhline(CLEARANCE_AT_L, color="#ff7f0e", linestyle="--", linewidth=1.5, label=f"L Alarm ({CLEARANCE_AT_L:.3f} mm)")
+ax.axhline(CLEARANCE_AT_LL, color="#d62728", linestyle="--", linewidth=1.5, label=f"LL Alarm ({CLEARANCE_AT_LL:.3f} mm)")
+ax.axhline(MIN_CLEARANCE, color="black", linestyle=":", linewidth=1.5, label=f"Min Clearance ({MIN_CLEARANCE:.3f} mm)")
+
+if f_L[1]:
+    d_l = t0 + timedelta(days=f_L[1])
+    ax.axvline(d_l, color="#ff7f0e", linestyle="-.", alpha=0.6)
+    ax.annotate(f"L Alarm\n{d_l.strftime('%Y-%m-%d')}", (d_l, ax.get_ylim()[1]), xytext=(3, -5), textcoords="offset points", fontsize=8, color="#ff7f0e", va="top")
+
+if f_LL[1]:
+    d_ll = t0 + timedelta(days=f_LL[1])
+    ax.axvline(d_ll, color="#d62728", linestyle="-.", alpha=0.6)
+    ax.annotate(f"LL Alarm\n{d_ll.strftime('%Y-%m-%d')}", (d_ll, ax.get_ylim()[1]), xytext=(3, -25), textcoords="offset points", fontsize=8, color="#d62728", va="top")
+
+if f_Min[1]:
+    d_min = t0 + timedelta(days=f_Min[1])
+    ax.axvline(d_min, color="black", linestyle="-.", alpha=0.6)
+    ax.annotate(f"Min Clearance\n{d_min.strftime('%Y-%m-%d')}", (d_min, ax.get_ylim()[1]), xytext=(3, -45), textcoords="offset points", fontsize=8, color="black", va="top")
+
+ax.set_ylabel("Clearance (mm)", fontsize=10, fontweight="bold")
+ax.set_xlabel("Date", fontsize=10, fontweight="bold")
+ax.set_title("Piston Rod Clearance Prognostic Trend Analysis", fontsize=12, fontweight="bold", pad=12)
+ax.legend(loc="lower left", fontsize=8, framealpha=0.9)
+ax.grid(True, linestyle=":", alpha=0.6)
+fig.autofmt_xdate()
+fig.tight_layout()
+
+plot_img_path = "clearance_trend_plot_en.png"
+fig.savefig(plot_img_path, dpi=150, bbox_inches="tight")
+plt.close(fig)
+
+wb = openpyxl.Workbook()
+
+font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+font_sub_header = Font(name="Calibri", size=11, bold=True, color="1F497D")
+font_bold = Font(name="Calibri", size=10, bold=True)
+font_regular = Font(name="Calibri", size=10)
+font_title = Font(name="Calibri", size=16, bold=True, color="1F497D")
+
+fill_navy = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
+fill_accent = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
+
+thin_border_side = Side(border_style="thin", color="D9D9D9")
+border_thin = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
+
+align_center = Alignment(horizontal="center", vertical="center")
+align_right = Alignment(horizontal="right", vertical="center")
+
+# TAB 1
+ws_summary = wb.active
+ws_summary.title = "Summary & Prognosis"
+ws_summary.views.sheetView[0].showGridLines = True
+
+ws_summary["B2"] = "RECIPROCATING COMPRESSOR PISTON ROD CLEARANCE - PROGNOSTIC REPORT"
+ws_summary["B2"].font = font_title
+
+ws_summary["B4"] = "1. TECHNICAL PARAMETERS & SETPOINTS"
+ws_summary["B4"].font = font_sub_header
+
+headers_s1 = ["Parameter", "Value", "Unit", "Remarks / Formula"]
+for col_idx, h in enumerate(headers_s1, start=2):
+    cell = ws_summary.cell(row=5, column=col_idx, value=h)
+    cell.font = font_header
+    cell.fill = fill_navy
+    cell.alignment = align_center
+
+s1_data = [
+    ("As-New Clearance", NEW_CLEARANCE, "mm", "Original rod / band clearance"),
+    ("BN3500 L Alarm Threshold", BN_L_THRESHOLD, "um", "L Alert (Probe domain)"),
+    ("BN3500 LL Alarm Threshold", BN_LL_THRESHOLD, "um", "LL Danger (Probe domain)"),
+    ("Minimum Allowable Clearance", MIN_CLEARANCE, "mm", "OEM maximum wear limit"),
+    ("Clearance at L Alarm", CLEARANCE_AT_L, "mm", "= New Clearance - (L / 1000)"),
+    ("Clearance at LL Alarm", CLEARANCE_AT_LL, "mm", "= New Clearance - (LL / 1000)"),
+    ("Confidence Level Analysis", CONFIDENCE_PCT / 100.0, "%", "Regression statistical confidence interval")
+]
+
+for r_idx, row in enumerate(s1_data, start=6):
+    ws_summary.cell(row=r_idx, column=2, value=row[0]).font = font_bold
+    cell_val = ws_summary.cell(row=r_idx, column=3, value=row[1])
+    cell_val.font = font_regular
+    cell_val.alignment = align_right
+    if row[2] == "%": cell_val.number_format = "0.0%"
+    elif isinstance(row[1], float): cell_val.number_format = "0.000" if "Clearance" in row[0] else "0.0"
+    
+    ws_summary.cell(row=r_idx, column=4, value=row[2]).alignment = align_center
+    ws_summary.cell(row=r_idx, column=5, value=row[3]).font = font_regular
+    for col_idx in range(2, 6): ws_summary.cell(row=r_idx, column=col_idx).border = border_thin
+
+ws_summary["B14"] = "2. CURRENT STATUS & WEAR RATE METRICS"
+ws_summary["B14"].font = font_sub_header
+
+headers_s2 = ["Performance Metric", "Current Value", "Unit", "Description"]
+for col_idx, h in enumerate(headers_s2, start=2):
+    cell = ws_summary.cell(row=15, column=col_idx, value=h)
+    cell.font = font_header
+    cell.fill = fill_navy
+    cell.alignment = align_center
+
+s2_data = [
+    ("Current Avg Probe Reading", avg_raw_curr, "um", f"Average of latest {n_recent} readings"),
+    ("Estimated Current Clearance", curr_clearance, "mm", "Based on cumulative wear"),
+    ("Average Wear Rate (Start-to-End)", avg_wear_rate, "um/day", "Lifetime average wear rate"),
+    ("Instantaneous Wear Rate (Model)", inst_wear_rate, "um/day", f"Latest rate from {best_name} model"),
+    ("Best-Fit Regression Model", best_name, "-", f"R² Value = {best['r2']:.4f}")
+]
+
+for r_idx, row in enumerate(s2_data, start=16):
+    ws_summary.cell(row=r_idx, column=2, value=row[0]).font = font_bold
+    cell_val = ws_summary.cell(row=r_idx, column=3, value=row[1])
+    cell_val.font = font_bold if "Clearance" in row[0] else font_regular
+    cell_val.alignment = align_right
+    if isinstance(row[1], float): cell_val.number_format = "0.0000" if "Clearance" in row[0] or "Rate" in row[0] else "0.00"
+    ws_summary.cell(row=r_idx, column=4, value=row[2]).alignment = align_center
+    ws_summary.cell(row=r_idx, column=5, value=row[3]).font = font_regular
+    for col_idx in range(2, 6): ws_summary.cell(row=r_idx, column=col_idx).border = border_thin
+
+ws_summary["B22"] = f"3. PROGNOSTIC TARGET CROSSING FORECAST ({CONFIDENCE_PCT:.0f}% CONFIDENCE INTERVAL)"
+ws_summary["B22"].font = font_sub_header
+
+headers_s3 = ["Alarm Threshold / Setpoint", "Clearance (mm)", "Wear (um)", "Early Forecast", "Central Forecast", "Late Forecast"]
+for col_idx, h in enumerate(headers_s3, start=2):
+    cell = ws_summary.cell(row=23, column=col_idx, value=h)
+    cell.font = font_header
+    cell.fill = fill_navy
+    cell.alignment = align_center
+
+s3_data = [
+    ("L Alarm Threshold", CLEARANCE_AT_L, WEAR_TARGET_L, fmt_d(t0, f_L[0]), fmt_d(t0, f_L[1]), fmt_d(t0, f_L[2])),
+    ("LL Alarm Threshold", CLEARANCE_AT_LL, WEAR_TARGET_LL, fmt_d(t0, f_LL[0]), fmt_d(t0, f_LL[1]), fmt_d(t0, f_LL[2])),
+    ("Min Allowable Clearance", MIN_CLEARANCE, WEAR_TARGET_MIN, fmt_d(t0, f_Min[0]), fmt_d(t0, f_Min[1]), fmt_d(t0, f_Min[2]))
+]
+
+for r_idx, row in enumerate(s3_data, start=24):
+    ws_summary.cell(row=r_idx, column=2, value=row[0]).font = font_bold
+    ws_summary.cell(row=r_idx, column=3, value=row[1]).number_format = "0.000"
+    ws_summary.cell(row=r_idx, column=4, value=row[2]).number_format = "0.0"
+    
+    cell_e = ws_summary.cell(row=r_idx, column=5, value=row[3])
+    cell_c = ws_summary.cell(row=r_idx, column=6, value=row[4])
+    cell_l = ws_summary.cell(row=r_idx, column=7, value=row[5])
+    
+    cell_e.alignment = align_center
+    cell_c.alignment = align_center
+    cell_l.alignment = align_center
+    cell_c.font = font_bold
+
+    for col_idx in range(2, 8): ws_summary.cell(row=r_idx, column=col_idx).border = border_thin
+
+img = Image(plot_img_path)
+img.width = 680
+img.height = 370
+ws_summary.add_image(img, "B29")
+
+col_widths_summary = {"A": 3, "B": 32, "C": 18, "D": 15, "E": 20, "F": 20, "G": 20}
+for col, w in col_widths_summary.items(): ws_summary.column_dimensions[col].width = w
+
+# TAB 2
+ws_models = wb.create_sheet(title="Model Evaluation")
+ws_models.views.sheetView[0].showGridLines = True
+
+ws_models["B2"] = "PROGNOSTIC REGRESSION MODEL COMPARISON"
+ws_models["B2"].font = font_title
+
+headers_m = ["Model Name", "R² Score", "Fit Status", "Residual Std Dev", "Degrees of Freedom (DOF)", "Selection"]
+for col_idx, h in enumerate(headers_m, start=2):
+    cell = ws_models.cell(row=4, column=col_idx, value=h)
+    cell.font = font_header
+    cell.fill = fill_navy
+    cell.alignment = align_center
+
+row_m_idx = 5
+for m_name, res in model_results.items():
+    ws_models.cell(row=row_m_idx, column=2, value=m_name).font = font_bold
+    r2_cell = ws_models.cell(row=row_m_idx, column=3, value=res["r2"])
+    r2_cell.number_format = "0.0000"
+    r2_cell.alignment = align_right
+    ws_models.cell(row=row_m_idx, column=4, value="SUCCESS").alignment = align_center
+    std_cell = ws_models.cell(row=row_m_idx, column=5, value=res["resid_std"])
+    std_cell.number_format = "0.000"
+    std_cell.alignment = align_right
+    ws_models.cell(row=row_m_idx, column=6, value=res["dof"]).alignment = align_center
+    status_cell = ws_models.cell(row=row_m_idx, column=7, value="<== BEST FIT" if m_name == best_name else "")
+    status_cell.font = font_bold
+    status_cell.alignment = align_center
+    if m_name == best_name:
+        for c in range(2, 8): ws_models.cell(row=row_m_idx, column=c).fill = fill_accent
+    for c in range(2, 8): ws_models.cell(row=row_m_idx, column=c).border = border_thin
+    row_m_idx += 1
+
+col_widths_m = {"A": 3, "B": 22, "C": 22, "D": 15, "E": 22, "F": 25, "G": 18}
+for col, w in col_widths_m.items(): ws_models.column_dimensions[col].width = w
+
+# TAB 3
+ws_data = wb.create_sheet(title="Historical & Forecast Data")
+ws_data.views.sheetView[0].showGridLines = True
+
+ws_data["A1"] = "HISTORICAL AND FORECAST DATA POINTS"
+ws_data["A1"].font = font_title
+
+headers_d = ["Timestamp / Date", "Elapsed Days", "Raw Reading (um)", "Calculated Wear (um)", "Clearance (mm)", "Data Type"]
+for col_idx, h in enumerate(headers_d, start=1):
+    cell = ws_data.cell(row=3, column=col_idx, value=h)
+    cell.font = font_header
+    cell.fill = fill_navy
+    cell.alignment = align_center
+
+curr_row = 4
+for i, r in df.iterrows():
+    ws_data.cell(row=curr_row, column=1, value=r["timestamp"].strftime("%Y-%m-%d %H:%M")).alignment = align_center
+    ws_data.cell(row=curr_row, column=2, value=days[i]).number_format = "0.0"
+    ws_data.cell(row=curr_row, column=3, value=r["raw_um"]).number_format = "0.00"
+    ws_data.cell(row=curr_row, column=4, value=r["wear_um"]).number_format = "0.00"
+    c_cell = ws_data.cell(row=curr_row, column=5, value=r["clearance_mm"])
+    c_cell.number_format = "0.0000"
+    c_cell.font = font_bold
+    ws_data.cell(row=curr_row, column=6, value="Historical (Measured)").alignment = align_center
+    for c in range(1, 7): ws_data.cell(row=curr_row, column=c).border = border_thin
+    curr_row += 1
+
+x_future = np.linspace(days[-1] + 1, x_max_plot, 30)
+y_future_wear = best["func"](x_future, *best["popt"])
+y_future_clear = NEW_CLEARANCE - (y_future_wear / 1000.0)
+
+for x_d, w_val, c_val in zip(x_future, y_future_wear, y_future_clear):
+    dt_future = t0 + timedelta(days=x_d)
+    ws_data.cell(row=curr_row, column=1, value=dt_future.strftime("%Y-%m-%d")).alignment = align_center
+    ws_data.cell(row=curr_row, column=2, value=x_d).number_format = "0.0"
+    ws_data.cell(row=curr_row, column=3, value=-w_val).number_format = "0.00"
+    ws_data.cell(row=curr_row, column=4, value=w_val).number_format = "0.00"
+    c_cell = ws_data.cell(row=curr_row, column=5, value=c_val)
+    c_cell.number_format = "0.0000"
+    c_cell.font = font_bold
+    
+    type_cell = ws_data.cell(row=curr_row, column=6, value="Predicted (Model Forecast)")
+    type_cell.alignment = align_center
+    type_cell.font = font_bold
+    
+    for c in range(1, 7):
+        ws_data.cell(row=curr_row, column=c).border = border_thin
+        ws_data.cell(row=curr_row, column=c).fill = fill_accent
+    curr_row += 1
+
+col_widths_d = {"A": 20, "B": 15, "C": 18, "D": 22, "E": 18, "F": 25}
+for col, w in col_widths_d.items(): ws_data.column_dimensions[col].width = w
+
+output_excel_path = "Piston_Rod_Clearance_Prognostic_Report_EN.xlsx"
+wb.save(output_excel_path)
+print("English version generated successfully.")
