@@ -1,51 +1,139 @@
+"""
+Reciprocating Compressor Piston Rod Clearance Prognostic Analysis
+-----------------------------------------------------------------
+This script performs non-linear statistical regression modeling on rod drop/wear
+data to project exact breach dates for Bently Nevada 3500 alarm limits (L / LL)
+and OEM minimum allowable clearance thresholds.
+
+Designed for Google Colab Execution with Custom Output Directory Support.
+"""
+
 import os
-import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta
-from scipy import stats
-from scipy.optimize import curve_fit, brentq
+import shutil
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 from openpyxl.drawing.image import Image
-import matplotlib
-matplotlib.use("Agg")
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+import pandas as pd
+import numpy as np
+from scipy import stats
+from scipy.optimize import brentq, curve_fit
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
-# Set random seed for reproducibility
-np.random.seed(42)
-start_date = datetime(2025, 1, 1)
-days_span = 360
-timestamps = [start_date + timedelta(days=i*3) for i in range(days_span // 3)]
+# Import Google Colab File Utility
+from google.colab import files
 
-# Simulating a vertical top probe: rod drops over time -> raw reading goes down/more negative
-days_arr = np.array([(ts - start_date).days for ts in timestamps])
-wear_sim = 15.0 + 0.85 * days_arr + 0.0005 * (days_arr**1.8) + np.random.normal(0, 3.0, len(days_arr))
-raw_readings = -wear_sim # Vertical top mounted probe
+# ==========================================
+# 1. USER INTERACTIVE INPUT CONFIGURATION
+# ==========================================
+print("=" * 65)
+print(" RECIPROCATING COMPRESSOR PROGNOSTIC ANALYSIS (GOOGLE COLAB)")
+print("=" * 65)
 
-df_sample = pd.DataFrame({
-    "TIMESTAMP": timestamps,
-    "ROD_DROP_UM": raw_readings
-})
+# 1. Upload Excel Data File via Browser
+print("\nPlease upload your Excel dataset file (.xlsx / .xls)...")
+uploaded = files.upload()
 
-excel_input_path = "sample_rod_drop_data.xlsx"
-df_sample.to_excel(excel_input_path, index=False)
+if not uploaded:
+    raise RuntimeError("No file was uploaded. Please re-run the cell and upload a valid Excel file.")
 
-# Configuration Parameters
-NEW_CLEARANCE = 14.820       # mm
-BN_L_THRESHOLD = 300.0       # um
-BN_LL_THRESHOLD = 500.0      # um
-MIN_CLEARANCE = 14.200       # mm
-CONFIDENCE_PCT = 95.0
+# Select the uploaded file name automatically
+EXCEL_INPUT_FILE = list(uploaded.keys())[0]
+print(f"\nUploaded file successfully loaded: '{EXCEL_INPUT_FILE}'")
 
-# Calculate Threshold Clearance values
-CLEARANCE_AT_L = NEW_CLEARANCE - (abs(BN_L_THRESHOLD) / 1000.0)    # 14.520 mm
-CLEARANCE_AT_LL = NEW_CLEARANCE - (abs(BN_LL_THRESHOLD) / 1000.0)  # 14.320 mm
-WEAR_TARGET_L = abs(BN_L_THRESHOLD)                                 # 300 um
-WEAR_TARGET_LL = abs(BN_LL_THRESHOLD)                               # 500 um
-WEAR_TARGET_MIN = (NEW_CLEARANCE - MIN_CLEARANCE) * 1000.0         # 620 um
+# 2. Input Technical Specifications & Bently Nevada 3500 Alarm Thresholds (Mandatory Prompts)
+print("\n--- Enter Engineering Parameters ---")
+while True:
+    try:
+        NEW_CLEARANCE = float(input("Enter As-New Clearance [mm]: "))
+        break
+    except ValueError:
+        print("Invalid input! Please enter a valid numeric value for As-New Clearance.")
 
-# Model definitions
+while True:
+    try:
+        BN_L_THRESHOLD = float(input("Enter Bently Nevada L Alarm Threshold [um]: "))
+        break
+    except ValueError:
+        print("Invalid input! Please enter a valid numeric value for L Alarm Threshold.")
+
+while True:
+    try:
+        BN_LL_THRESHOLD = float(input("Enter Bently Nevada LL Alarm Threshold [um]: "))
+        break
+    except ValueError:
+        print("Invalid input! Please enter a valid numeric value for LL Alarm Threshold.")
+
+while True:
+    try:
+        MIN_CLEARANCE = float(input("Enter Minimum Allowable Clearance / OEM Limit [mm]: "))
+        break
+    except ValueError:
+        print("Invalid input! Please enter a valid numeric value for Minimum Allowable Clearance.")
+
+# Confidence Band (Retaining Default)
+conf_val = input("Enter Confidence Level Analysis [%] (Press Enter for default [95.0]): ").strip()
+if not conf_val:
+    CONFIDENCE_PCT = 95.0
+else:
+    try:
+        CONFIDENCE_PCT = float(conf_val)
+    except ValueError:
+        print("Invalid input detected. Falling back to default Confidence Level: 95.0%")
+        CONFIDENCE_PCT = 95.0
+
+# 3. Output Directory Prompt
+print("\n--- Enter Output Directory Configuration ---")
+default_dir = "Prognosis_Output_Files"
+OUTPUT_DIR = input(f"Enter directory path to save outputs [{default_dir}]: ").strip() or default_dir
+
+# Create output directory if it doesn't exist
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+print(f"Output files will be saved in directory: '{os.path.abspath(OUTPUT_DIR)}'")
+
+# Calculate Targets Based on User Input
+CLEARANCE_AT_L = NEW_CLEARANCE - (abs(BN_L_THRESHOLD) / 1000.0)
+CLEARANCE_AT_LL = NEW_CLEARANCE - (abs(BN_LL_THRESHOLD) / 1000.0)
+WEAR_TARGET_L = abs(BN_L_THRESHOLD)
+WEAR_TARGET_LL = abs(BN_LL_THRESHOLD)
+WEAR_TARGET_MIN = (NEW_CLEARANCE - MIN_CLEARANCE) * 1000.0
+
+print("\nParameters successfully updated!")
+print(f"   - As-New Clearance : {NEW_CLEARANCE:.3f} mm")
+print(f"   - L Setpoint       : {CLEARANCE_AT_L:.3f} mm ({BN_L_THRESHOLD} um wear)")
+print(f"   - LL Setpoint      : {CLEARANCE_AT_LL:.3f} mm ({BN_LL_THRESHOLD} um wear)")
+print(f"   - OEM Limit        : {MIN_CLEARANCE:.3f} mm ({WEAR_TARGET_MIN:.1f} um wear)")
+print(f"   - Confidence Band  : {CONFIDENCE_PCT:.1f}%\n")
+
+# ==========================================
+# 2. DATA IMPORT AND PREPROCESSING
+# ==========================================
+print("Importing historical dataset from uploaded Excel file...")
+df = pd.read_excel(EXCEL_INPUT_FILE)
+
+# Column auto-detection / standardization
+if len(df.columns) >= 2:
+    df = df.iloc[:, :2]
+    df.columns = ["timestamp", "raw_um"]
+
+df["timestamp"] = pd.to_datetime(df["timestamp"])
+df["raw_um"] = pd.to_numeric(df["raw_um"], errors="coerce")
+df = df.dropna().sort_values("timestamp").reset_index(drop=True)
+
+# Derive Wear (um) and Remaining Clearance (mm)
+df["wear_um"] = -df["raw_um"]
+df["clearance_mm"] = NEW_CLEARANCE - (df["wear_um"] / 1000.0)
+
+t0 = df["timestamp"].iloc[0]
+days = (df["timestamp"] - t0).dt.total_seconds().values / 86400.0
+wear_um = df["wear_um"].values
+
+# ==========================================
+# 3. REGRESSION MODELING & COMPARISON
+# ==========================================
+print("Fitting statistical regression models (Linear, Quadratic, Power, Exponential, Logarithmic)...")
+
 def _lin(x, a, b): return a * x + b
 def _quad(x, a, b, c): return a * x**2 + b * x + c
 def _power(x, a, b): return a * np.power(np.maximum(x, 1e-6), b)
@@ -60,22 +148,6 @@ MODELS = {
     "Logarithmic": (_logf, [1.0, 0.0])
 }
 
-# Process historical data
-df = df_sample.copy()
-df.columns = ["timestamp", "raw_um"]
-df["timestamp"] = pd.to_datetime(df["timestamp"])
-df["raw_um"] = pd.to_numeric(df["raw_um"], errors="coerce")
-df = df.dropna().sort_values("timestamp").reset_index(drop=True)
-
-# Vertical top convention: -raw_um is positive wear in microns
-df["wear_um"] = -df["raw_um"]
-df["clearance_mm"] = NEW_CLEARANCE - (df["wear_um"] / 1000.0)
-
-t0 = df["timestamp"].iloc[0]
-days = (df["timestamp"] - t0).dt.total_seconds().values / 86400.0
-wear_um = df["wear_um"].values
-
-# Fit candidate models
 model_results = {}
 for name, (func, p0) in MODELS.items():
     try:
@@ -85,17 +157,22 @@ for name, (func, p0) in MODELS.items():
         ss_tot = np.sum((wear_um - np.mean(wear_um))**2)
         r2 = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
         dof = max(len(days) - len(popt), 1)
+        resid_std = np.sqrt(ss_res / dof)
         model_results[name] = {
             "func": func, "popt": popt, "r2": r2,
-            "resid_std": np.sqrt(ss_res / dof), "dof": dof
+            "resid_std": resid_std, "dof": dof, "ss_res": ss_res
         }
     except Exception:
         pass
 
+# Select the best performing regression model based on R-squared
 best_name = max(model_results, key=lambda k: model_results[k]["r2"])
 best = model_results[best_name]
+print(f"Best-fit model selected: {best_name} (R^2 = {best['r2']:.4f})")
 
-# Forecast function
+# ==========================================
+# 4. PROGNOSTIC BREACH CALCULATION
+# ==========================================
 def solve_crossing(model, target_wear, conf_pct, max_days=3650):
     func, popt, dof, std = model["func"], model["popt"], model["dof"], model["resid_std"]
     t_val = stats.t.ppf((1 + conf_pct / 100.0) / 2, dof) if dof >= 1 else 0.0
@@ -119,23 +196,23 @@ f_L = solve_crossing(best, WEAR_TARGET_L, CONFIDENCE_PCT, max_horizon)
 f_LL = solve_crossing(best, WEAR_TARGET_LL, CONFIDENCE_PCT, max_horizon)
 f_Min = solve_crossing(best, WEAR_TARGET_MIN, CONFIDENCE_PCT, max_horizon)
 
-def fmt_d(t0, d_days):
-    return (t0 + timedelta(days=d_days)).strftime("%Y-%m-%d") if d_days is not None else "Exceeds Range"
+print("\nPROGNOSTIC BREACH PROJECTIONS:")
+print("-" * 55)
+for label, (e, c, l) in [("L Alarm", f_L), ("LL Alarm", f_LL), ("Min Clearance", f_Min)]:
+    c_date = (t0 + timedelta(days=c)).strftime('%Y-%m-%d') if c else "N/A"
+    e_date = (t0 + timedelta(days=e)).strftime('%Y-%m-%d') if e else "N/A"
+    l_date = (t0 + timedelta(days=l)).strftime('%Y-%m-%d') if l else "N/A"
+    print(f" - {label:<15} | Expected: {c_date} | Early: {e_date} | Conservative: {l_date}")
 
-# Key Metrics
-n_recent = min(5, len(df))
-avg_raw_curr = df["raw_um"].tail(n_recent).mean()
-avg_wear_curr = df["wear_um"].tail(n_recent).mean()
-curr_clearance = NEW_CLEARANCE - (avg_wear_curr / 1000.0)
-avg_wear_rate = (wear_um[-1] - wear_um[0]) / days[-1] if days[-1] > 0 else 0
-eps = 0.01
-inst_wear_rate = (best["func"](days[-1] + eps, *best["popt"]) - best["func"](days[-1] - eps, *best["popt"])) / (2 * eps)
-
-# Generate Plot Image for embedding into Excel sheet
+# ==========================================
+# 5. GENERATE HIGH-RES TREND PLOT
+# ==========================================
+print("\nGenerating prognostic trend visualization...")
 fig, ax = plt.subplots(figsize=(10, 5.5), dpi=150)
+
+# Plot raw measurements
 ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=22, alpha=0.8, label="Historical Observations (Measured)")
 
-# Forecast curve
 candidate_days = [d for d in [f_L[1], f_LL[1], f_Min[1]] if d is not None]
 x_max_plot = max(candidate_days) * 1.15 if candidate_days else days[-1] * 2
 x_plot = np.linspace(0, x_max_plot, 500)
@@ -146,14 +223,16 @@ dates_plot = [t0 + timedelta(days=d) for d in x_plot]
 t_val = stats.t.ppf((1 + CONFIDENCE_PCT / 100.0) / 2, best["dof"]) if best["dof"] >= 1 else 0.0
 band_mm = (t_val * best["resid_std"]) / 1000.0
 
-ax.plot(dates_plot, y_clear_plot, color="#d62728", linewidth=2, label=f"Best Regression Model: {best_name} ($R^2={best['r2']:.4f}$)")
+# Plot best fit regression curve and confidence band
+ax.plot(dates_plot, y_clear_plot, color="#d62728", linewidth=2, label=f"Best Fit Regression Model: {best_name} ($R^2={best['r2']:.4f}$)")
 ax.fill_between(dates_plot, y_clear_plot - band_mm, y_clear_plot + band_mm, color="#d62728", alpha=0.15, label=f"{CONFIDENCE_PCT:.0f}% Confidence Interval")
 
+# Horizontal Threshold Lines
 ax.axhline(CLEARANCE_AT_L, color="#ff7f0e", linestyle="--", linewidth=1.5, label=f"L Alarm ({CLEARANCE_AT_L:.3f} mm)")
 ax.axhline(CLEARANCE_AT_LL, color="#d62728", linestyle="--", linewidth=1.5, label=f"LL Alarm ({CLEARANCE_AT_LL:.3f} mm)")
 ax.axhline(MIN_CLEARANCE, color="black", linestyle=":", linewidth=1.5, label=f"Min Clearance ({MIN_CLEARANCE:.3f} mm)")
 
-# Mark target dates
+# Vertical Threshold Crossing Annotations
 if f_L[1]:
     d_l = t0 + timedelta(days=f_L[1])
     ax.axvline(d_l, color="#ff7f0e", linestyle="-.", alpha=0.6)
@@ -171,242 +250,167 @@ if f_Min[1]:
 
 ax.set_ylabel("Clearance (mm)", fontsize=10, fontweight="bold")
 ax.set_xlabel("Date", fontsize=10, fontweight="bold")
-ax.set_title("Piston Rod Clearance Wear Trend Prognostic Analysis", fontsize=12, fontweight="bold", pad=12)
+ax.set_title("Piston Rod Clearance Prognostic Trend Analysis", fontsize=12, fontweight="bold", pad=12)
 ax.legend(loc="lower left", fontsize=8, framealpha=0.9)
 ax.grid(True, linestyle=":", alpha=0.6)
 fig.autofmt_xdate()
 fig.tight_layout()
 
-plot_img_path = "clearance_trend_plot.png"
+# Save plot into designated directory
+plot_img_path = os.path.join(OUTPUT_DIR, "clearance_trend_plot_en.png")
 fig.savefig(plot_img_path, dpi=150, bbox_inches="tight")
-plt.close(fig)
+plt.show()  # Display plot inside Colab notebook
+print(f"Trend chart saved to directory: {plot_img_path}")
 
-# BUILD PROFESSIONAL EXCEL WORKBOOK
+# ==========================================
+# 6. EXCEL REPORT GENERATION
+# ==========================================
+print("Generating Excel prognostic workbook report...")
 wb = openpyxl.Workbook()
 
-# Setup Styles
-font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-font_sub_header = Font(name="Calibri", size=11, bold=True, color="1F497D")
-font_bold = Font(name="Calibri", size=10, bold=True)
-font_regular = Font(name="Calibri", size=10)
-font_title = Font(name="Calibri", size=16, bold=True, color="1F497D")
+# Sheet 1: Executive Summary
+ws1 = wb.active
+ws1.title = "Summary & Prognosis"
+ws1.views.sheetView[0].showGridLines = True
 
-fill_navy = PatternFill(start_color="1F497D", end_color="1F497D", fill_type="solid")
-fill_accent = PatternFill(start_color="DCE6F1", end_color="DCE6F1", fill_type="solid")
+NAVY_FILL = PatternFill(start_color="1B365D", end_color="1B365D", fill_type="solid")
+STEEL_FILL = PatternFill(start_color="4A777A", end_color="4A777A", fill_type="solid")
+TITLE_FONT = Font(name="Calibri", size=16, bold=True, color="FFFFFF")
+HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+BOLD_FONT = Font(name="Calibri", size=11, bold=True)
+REGULAR_FONT = Font(name="Calibri", size=11)
 
-thin_border_side = Side(border_style="thin", color="D9D9D9")
-border_thin = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
+ws1.merge_cells("B2:G2")
+ws1["B2"] = "PISTON ROD CLEARANCE PROGNOSTIC REPORT"
+ws1["B2"].font = TITLE_FONT
+ws1["B2"].fill = NAVY_FILL
+ws1["B2"].alignment = Alignment(horizontal="center", vertical="center")
+ws1.row_dimensions[2].height = 40
 
-align_center = Alignment(horizontal="center", vertical="center")
-align_right = Alignment(horizontal="right", vertical="center")
+ws1.merge_cells("B4:D4")
+ws1["B4"] = "TECHNICAL SPECIFICATIONS & THRESHOLDS"
+ws1["B4"].font = HEADER_FONT
+ws1["B4"].fill = STEEL_FILL
 
-# -------------------------------------------------------------
-# TAB 1: Dashboard & Summary
-# -------------------------------------------------------------
-ws_summary = wb.active
-ws_summary.title = "Summary & Prognosis"
-ws_summary.views.sheetView[0].showGridLines = True
-
-# Title
-ws_summary["B2"] = "RECIPROCATING COMPRESSOR PISTON ROD CLEARANCE - PROGNOSTIC REPORT"
-ws_summary["B2"].font = font_title
-
-# Section 1: Setpoint & Input Parameters
-ws_summary["B4"] = "1. TECHNICAL & SETPOINT INPUTS"
-ws_summary["B4"].font = font_sub_header
-
-headers_s1 = ["Parameter", "Value", "Unit", "Notes / Formula"]
-for col_idx, h in enumerate(headers_s1, start=2):
-    cell = ws_summary.cell(row=5, column=col_idx, value=h)
-    cell.font = font_header
-    cell.fill = fill_navy
-    cell.alignment = align_center
-
-s1_data = [
-    ("As-New Clearance", NEW_CLEARANCE, "mm", "Original clearance for new rod/rider band"),
-    ("BN3500 L Alarm Threshold", BN_L_THRESHOLD, "um", "L Alarm (Probe domain)"),
-    ("BN3500 LL Alarm Threshold", BN_LL_THRESHOLD, "um", "LL Alarm (Probe domain)"),
-    ("Minimum Allowable Clearance", MIN_CLEARANCE, "mm", "Manufacturer maximum wear limit"),
-    ("Clearance at L Alarm", CLEARANCE_AT_L, "mm", "= New Clearance - (L / 1000)"),
-    ("Clearance at LL Alarm", CLEARANCE_AT_LL, "mm", "= New Clearance - (LL / 1000)"),
-    ("Confidence Level Analysis", CONFIDENCE_PCT / 100.0, "%", "Regression statistical confidence interval")
+params = [
+    ("As-New Rider Ring Clearance", NEW_CLEARANCE, "mm"),
+    ("Bently Nevada L Alarm Wear", BN_L_THRESHOLD, "um"),
+    ("Bently Nevada LL Alarm Wear", BN_LL_THRESHOLD, "um"),
+    ("Minimum Allowable Clearance (OEM)", MIN_CLEARANCE, "mm"),
+    ("Calculated L Clearance Limit", CLEARANCE_AT_L, "mm"),
+    ("Calculated LL Clearance Limit", CLEARANCE_AT_LL, "mm"),
+    ("Statistical Confidence Level", CONFIDENCE_PCT / 100.0, "%")
 ]
 
-for r_idx, row in enumerate(s1_data, start=6):
-    ws_summary.cell(row=r_idx, column=2, value=row[0]).font = font_bold
-    cell_val = ws_summary.cell(row=r_idx, column=3, value=row[1])
-    cell_val.font = font_regular
-    cell_val.alignment = align_right
-    if row[2] == "%":
-        cell_val.number_format = "0.0%"
-    elif isinstance(row[1], float):
-        cell_val.number_format = "0.000" if "Clearance" in row[0] else "0.0"
-    
-    ws_summary.cell(row=r_idx, column=4, value=row[2]).alignment = align_center
-    ws_summary.cell(row=r_idx, column=5, value=row[3]).font = font_regular
+for idx, (param, val, unit) in enumerate(params, start=5):
+    ws1.cell(row=idx, column=2, value=param).font = BOLD_FONT
+    cell = ws1.cell(row=idx, column=3, value=val)
+    cell.font = REGULAR_FONT
+    cell.alignment = Alignment(horizontal="right")
+    if unit == "mm": cell.number_format = "0.000"
+    elif unit == "um": cell.number_format = "0.0"
+    elif unit == "%": cell.number_format = "0.0%"
+    ws1.cell(row=idx, column=4, value=unit).font = REGULAR_FONT
 
-    for col_idx in range(2, 6):
-        ws_summary.cell(row=r_idx, column=col_idx).border = border_thin
+ws1.merge_cells("B13:G13")
+ws1["B13"] = "PROGNOSTIC BREACH PROJECTION SUMMARY"
+ws1["B13"].font = HEADER_FONT
+ws1["B13"].fill = STEEL_FILL
 
-# Section 2: Current Status & Key Metrics
-ws_summary["B14"] = "2. CURRENT STATUS & WEAR RATE METRICS"
-ws_summary["B14"].font = font_sub_header
+headers = ["Threshold Level", "Wear Target (um)", "Clearance Target (mm)", "Early Breach Date", "Expected Breach Date", "Conservative Date"]
+for col_num, h in enumerate(headers, start=2):
+    c = ws1.cell(row=14, column=col_num, value=h)
+    c.font = HEADER_FONT
+    c.fill = NAVY_FILL
+    c.alignment = Alignment(horizontal="center", vertical="center")
 
-headers_s2 = ["Performance Metric", "Current Value", "Unit", "Description"]
-for col_idx, h in enumerate(headers_s2, start=2):
-    cell = ws_summary.cell(row=15, column=col_idx, value=h)
-    cell.font = font_header
-    cell.fill = fill_navy
-    cell.alignment = align_center
-
-s2_data = [
-    ("Current Probe Average Reading", avg_raw_curr, "um", f"Average of recent {n_recent} readings"),
-    ("Estimated Current Clearance", curr_clearance, "mm", "Based on cumulative wear"),
-    ("Average Wear Rate (Start-to-End)", avg_wear_rate, "um/day", "Average rate across historical lifespan"),
-    ("Instantaneous Wear Rate (Model)", inst_wear_rate, "um/day", f"Latest rate per {best_name} model"),
-    ("Selected Best-Fit Model", best_name, "-", f"R² Value = {best['r2']:.4f}")
+prognostic_rows = [
+    ("Bently Nevada L Alarm", WEAR_TARGET_L, CLEARANCE_AT_L, f_L),
+    ("Bently Nevada LL Alarm", WEAR_TARGET_LL, CLEARANCE_AT_LL, f_LL),
+    ("Minimum Clearance (OEM)", WEAR_TARGET_MIN, MIN_CLEARANCE, f_Min)
 ]
 
-for r_idx, row in enumerate(s2_data, start=16):
-    ws_summary.cell(row=r_idx, column=2, value=row[0]).font = font_bold
-    cell_val = ws_summary.cell(row=r_idx, column=3, value=row[1])
-    cell_val.font = font_bold if "Clearance" in row[0] else font_regular
-    cell_val.alignment = align_right
-    if isinstance(row[1], float):
-        cell_val.number_format = "0.0000" if "Clearance" in row[0] or "Rate" in row[0] else "0.00"
-    ws_summary.cell(row=r_idx, column=4, value=row[2]).alignment = align_center
-    ws_summary.cell(row=r_idx, column=5, value=row[3]).font = font_regular
+for row_idx, (level, w_tgt, c_tgt, dates_tuple) in enumerate(prognostic_rows, start=15):
+    e_d, c_d, l_d = dates_tuple
+    ws1.cell(row=row_idx, column=2, value=level).font = BOLD_FONT
+    c_w = ws1.cell(row=row_idx, column=3, value=w_tgt)
+    c_w.number_format = "0.0"
+    c_c = ws1.cell(row=row_idx, column=4, value=c_tgt)
+    c_c.number_format = "0.000"
 
-    for col_idx in range(2, 6):
-        ws_summary.cell(row=r_idx, column=col_idx).border = border_thin
+    for c_i, d_val in enumerate([e_d, c_d, l_d], start=5):
+        cell = ws1.cell(row=row_idx, column=c_i)
+        if d_val is not None:
+            cell.value = t0 + timedelta(days=d_val)
+            cell.number_format = "YYYY-MM-DD"
+        else:
+            cell.value = "N/A"
+        cell.alignment = Alignment(horizontal="center")
 
-# Section 3: Prognostic Target Dates
-ws_summary["B22"] = f"3. PROGNOSTIC TARGET DATE FORECAST ({CONFIDENCE_PCT:.0f}% CONFIDENCE LEVEL)"
-ws_summary["B22"].font = font_sub_header
-
-headers_s3 = ["Alarm Threshold / Setpoint", "Clearance (mm)", "Wear (um)", "Early Forecast", "Expected Forecast", "Late Forecast"]
-for col_idx, h in enumerate(headers_s3, start=2):
-    cell = ws_summary.cell(row=23, column=col_idx, value=h)
-    cell.font = font_header
-    cell.fill = fill_navy
-    cell.alignment = align_center
-
-s3_data = [
-    ("L Alarm Threshold", CLEARANCE_AT_L, WEAR_TARGET_L, fmt_d(t0, f_L[0]), fmt_d(t0, f_L[1]), fmt_d(t0, f_L[2])),
-    ("LL Alarm Threshold", CLEARANCE_AT_LL, WEAR_TARGET_LL, fmt_d(t0, f_LL[0]), fmt_d(t0, f_LL[1]), fmt_d(t0, f_LL[2])),
-    ("Min Allowable Clearance", MIN_CLEARANCE, WEAR_TARGET_MIN, fmt_d(t0, f_Min[0]), fmt_d(t0, f_Min[1]), fmt_d(t0, f_Min[2]))
-]
-
-for r_idx, row in enumerate(s3_data, start=24):
-    ws_summary.cell(row=r_idx, column=2, value=row[0]).font = font_bold
-    ws_summary.cell(row=r_idx, column=3, value=row[1]).number_format = "0.000"
-    ws_summary.cell(row=r_idx, column=4, value=row[2]).number_format = "0.0"
-    
-    # Dates
-    cell_e = ws_summary.cell(row=r_idx, column=5, value=row[3])
-    cell_c = ws_summary.cell(row=r_idx, column=6, value=row[4])
-    cell_l = ws_summary.cell(row=r_idx, column=7, value=row[5])
-    
-    cell_e.alignment = align_center
-    cell_c.alignment = align_center
-    cell_l.alignment = align_center
-    cell_c.font = font_bold
-
-    for col_idx in range(2, 8):
-        ws_summary.cell(row=r_idx, column=col_idx).border = border_thin
-
-# Embed Image Trend Plot into Summary Worksheet
+# Embed Chart
 img = Image(plot_img_path)
-img.width = 680
-img.height = 370
-ws_summary.add_image(img, "B29")
+ws1.add_image(img, "B20")
 
-# Adjust column widths for Summary
-col_widths_summary = {"A": 3, "B": 32, "C": 18, "D": 15, "E": 20, "F": 20, "G": 20}
-for col, w in col_widths_summary.items():
-    ws_summary.column_dimensions[col].width = w
+for col in ws1.columns:
+    max_len = max(len(str(cell.value or '')) for cell in col)
+    col_letter = get_column_letter(col[0].column)
+    ws1.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-# -------------------------------------------------------------
-# TAB 2: Model Comparison
-# -------------------------------------------------------------
-ws_models = wb.create_sheet(title="Model Evaluation")
-ws_models.views.sheetView[0].showGridLines = True
+# Sheet 2: Model Evaluation
+ws2 = wb.create_sheet(title="Model Evaluation & Data")
+ws2.views.sheetView[0].showGridLines = True
 
-ws_models["B2"] = "PROGNOSTIC REGRESSION MODEL COMPARISON"
-ws_models["B2"].font = font_title
+ws2.merge_cells("A1:E1")
+ws2["A1"] = "REGRESSION MODEL EVALUATION & RANKING"
+ws2["A1"].font = HEADER_FONT
+ws2["A1"].fill = NAVY_FILL
 
-headers_m = ["Model Name", "Coefficient of Determination (R²)", "Fit Status", "Residual Std Dev", "Degrees of Freedom (DOF)", "Final Selection"]
-for col_idx, h in enumerate(headers_m, start=2):
-    cell = ws_models.cell(row=4, column=col_idx, value=h)
-    cell.font = font_header
-    cell.fill = fill_navy
-    cell.alignment = align_center
+m_headers = ["Model Name", "R-Squared (R^2)", "Residual Std Dev (um)", "Degrees of Freedom", "Status"]
+for col_num, h in enumerate(m_headers, start=1):
+    c = ws2.cell(row=2, column=col_num, value=h)
+    c.font = HEADER_FONT
+    c.fill = STEEL_FILL
 
-row_m_idx = 5
-for m_name, res in model_results.items():
-    ws_models.cell(row=row_m_idx, column=2, value=m_name).font = font_bold
-    
-    r2_cell = ws_models.cell(row=row_m_idx, column=3, value=res["r2"])
-    r2_cell.number_format = "0.0000"
-    r2_cell.alignment = align_right
-    
-    ws_models.cell(row=row_m_idx, column=4, value="SUCCESS").alignment = align_center
-    
-    std_cell = ws_models.cell(row=row_m_idx, column=5, value=res["resid_std"])
-    std_cell.number_format = "0.000"
-    std_cell.alignment = align_right
-    
-    ws_models.cell(row=row_m_idx, column=6, value=res["dof"]).alignment = align_center
-    
-    status_cell = ws_models.cell(row=row_m_idx, column=7, value="<== BEST FIT" if m_name == best_name else "")
-    status_cell.font = font_bold
-    status_cell.alignment = align_center
+for r_idx, (m_name, m_info) in enumerate(model_results.items(), start=3):
+    ws2.cell(row=r_idx, column=1, value=m_name).font = BOLD_FONT
+    r2_c = ws2.cell(row=r_idx, column=2, value=m_info["r2"])
+    r2_c.number_format = "0.0000"
+    std_c = ws2.cell(row=r_idx, column=3, value=m_info["resid_std"])
+    std_c.number_format = "0.0"
+    ws2.cell(row=r_idx, column=4, value=m_info["dof"])
+    status_c = ws2.cell(row=r_idx, column=5, value="SELECTED" if m_name == best_name else "Candidate")
     if m_name == best_name:
-        for c in range(2, 8):
-            ws_models.cell(row=row_m_idx, column=c).fill = fill_accent
-            
-    for c in range(2, 8):
-        ws_models.cell(row=row_m_idx, column=c).border = border_thin
-    row_m_idx += 1
+        status_c.font = BOLD_FONT
 
-col_widths_m = {"A": 3, "B": 22, "C": 25, "D": 15, "E": 22, "F": 25, "G": 18}
-for col, w in col_widths_m.items():
-    ws_models.column_dimensions[col].width = w
+ws2.cell(row=10, column=1, value="Historical Data Analysis").font = HEADER_FONT
+ws2.cell(row=10, column=1).fill = STEEL_FILL
 
-# -------------------------------------------------------------
-# TAB 3: Processed Historical Data
-# -------------------------------------------------------------
-ws_data = wb.create_sheet(title="Historical Data")
-ws_data.views.sheetView[0].showGridLines = True
+d_headers = ["Timestamp", "Raw Probe Reading (um)", "Calculated Wear (um)", "Clearance (mm)"]
+for c_i, h in enumerate(d_headers, start=1):
+    c = ws2.cell(row=11, column=c_i, value=h)
+    c.font = HEADER_FONT
+    c.fill = NAVY_FILL
 
-ws_data["A1"] = "HISTORICAL CLEARANCE & WEAR DATA"
-ws_data["A1"].font = font_title
+for idx, row in df.iterrows():
+    r = idx + 12
+    ws2.cell(row=r, column=1, value=row["timestamp"]).number_format = "YYYY-MM-DD"
+    ws2.cell(row=r, column=2, value=row["raw_um"]).number_format = "0.0"
+    ws2.cell(row=r, column=3, value=row["wear_um"]).number_format = "0.0"
+    ws2.cell(row=r, column=4, value=row["clearance_mm"]).number_format = "0.000"
 
-headers_d = ["Timestamp", "Elapsed Days", "Raw Reading (um)", "Calculated Wear (um)", "Clearance (mm)"]
-for col_idx, h in enumerate(headers_d, start=1):
-    cell = ws_data.cell(row=3, column=col_idx, value=h)
-    cell.font = font_header
-    cell.fill = fill_navy
-    cell.alignment = align_center
+for col in ws2.columns:
+    max_len = max(len(str(cell.value or '')) for cell in col)
+    col_letter = get_column_letter(col[0].column)
+    ws2.column_dimensions[col_letter].width = max(max_len + 3, 12)
 
-for i, r in df.iterrows():
-    row_num = i + 4
-    ws_data.cell(row=row_num, column=1, value=r["timestamp"].strftime("%Y-%m-%d %H:%M")).alignment = align_center
-    ws_data.cell(row=row_num, column=2, value=days[i]).number_format = "0.0"
-    ws_data.cell(row=row_num, column=3, value=r["raw_um"]).number_format = "0.00"
-    ws_data.cell(row=row_num, column=4, value=r["wear_um"]).number_format = "0.00"
-    
-    c_cell = ws_data.cell(row=row_num, column=5, value=r["clearance_mm"])
-    c_cell.number_format = "0.0000"
-    c_cell.font = font_bold
-    
-    for c in range(1, 6):
-        ws_data.cell(row=row_num, column=c).border = border_thin
-
-col_widths_d = {"A": 20, "B": 15, "C": 18, "D": 22, "E": 18}
-for col, w in col_widths_d.items():
-    ws_data.column_dimensions[col].width = w
-
-output_excel_path = "Piston_Rod_Clearance_Prognostic_Report.xlsx"
+# Save Excel report into designated directory
+output_excel_path = os.path.join(OUTPUT_DIR, "Piston_Rod_Clearance_Prognostic_Report_EN.xlsx")
 wb.save(output_excel_path)
-print(f"Workbook successfully saved to {output_excel_path}")
+print(f"Analysis complete! Excel report saved to directory: {output_excel_path}")
+
+# Zip output folder and trigger download
+zip_filename = f"{OUTPUT_DIR}.zip"
+shutil.make_archive(OUTPUT_DIR, 'zip', OUTPUT_DIR)
+print(f"Compressed output folder saved as: {zip_filename}")
+print("Downloading ZIP archive containing all outputs to your machine...")
+files.download(zip_filename)
