@@ -1,45 +1,33 @@
-# Re-run script to generate exact same Excel files with English headers and titles.
-import os
-import numpy as np
-import pandas as pd
-from datetime import datetime, timedelta
-from scipy import stats
-from scipy.optimize import curve_fit, brentq
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.drawing.image import Image
-import matplotlib
-matplotlib.use("Agg")
+import pandas as pd
+import numpy as np
+from scipy import stats
+from scipy.optimize import curve_fit, brentq
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
-np.random.seed(42)
-start_date = datetime(2025, 1, 1)
-days_span = 360
-timestamps = [start_date + timedelta(days=i*3) for i in range(days_span // 3)]
-days_arr = np.array([(ts - start_date).days for ts in timestamps])
-wear_sim = 15.0 + 0.85 * days_arr + 0.0005 * (days_arr**1.8) + np.random.normal(0, 3.0, len(days_arr))
-raw_readings = -wear_sim
-
-df_sample = pd.DataFrame({
-    "TIMESTAMP": timestamps,
-    "ROD_DROP_UM": raw_readings
-})
-
-excel_input_path = "sample_rod_drop_data.xlsx"
-df_sample.to_excel(excel_input_path, index=False)
-
-NEW_CLEARANCE = 14.820       # mm
-BN_L_THRESHOLD = 300.0       # um
-BN_LL_THRESHOLD = 500.0      # um
-MIN_CLEARANCE = 14.200       # mm
+# ==========================================
+# 1. TECHNICAL CONFIGURATION & SETPOINTS
+# ==========================================
+EXCEL_INPUT_FILE = "sample_rod_drop_data.xlsx"  # Replace with actual file path
+NEW_CLEARANCE = 14.820       # mm (Original Clearance)
+BN_L_THRESHOLD = 300.0       # um (Probe domain Alert)
+BN_LL_THRESHOLD = 500.0      # um (Probe domain Danger)
+MIN_CLEARANCE = 14.200       # mm (OEM Limit)
 CONFIDENCE_PCT = 95.0
 
+# Calculated Targets
 CLEARANCE_AT_L = NEW_CLEARANCE - (abs(BN_L_THRESHOLD) / 1000.0)
 CLEARANCE_AT_LL = NEW_CLEARANCE - (abs(BN_LL_THRESHOLD) / 1000.0)
 WEAR_TARGET_L = abs(BN_L_THRESHOLD)
 WEAR_TARGET_LL = abs(BN_LL_THRESHOLD)
 WEAR_TARGET_MIN = (NEW_CLEARANCE - MIN_CLEARANCE) * 1000.0
 
+# ==========================================
+# 2. REGRESSION MODELS DEFINITION
+# ==========================================
 def _lin(x, a, b): return a * x + b
 def _quad(x, a, b, c): return a * x**2 + b * x + c
 def _power(x, a, b): return a * np.power(np.maximum(x, 1e-6), b)
@@ -54,7 +42,10 @@ MODELS = {
     "Logarithmic": (_logf, [1.0, 0.0])
 }
 
-df = pd.read_excel(excel_input_path)
+# ==========================================
+# 3. DATA LOADING & PREPROCESSING
+# ==========================================
+df = pd.read_excel(EXCEL_INPUT_FILE)
 df.columns = ["timestamp", "raw_um"]
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 df["raw_um"] = pd.to_numeric(df["raw_um"], errors="coerce")
@@ -67,6 +58,9 @@ t0 = df["timestamp"].iloc[0]
 days = (df["timestamp"] - t0).dt.total_seconds().values / 86400.0
 wear_um = df["wear_um"].values
 
+# ==========================================
+# 4. MODEL FITTING & EVALUATION
+# ==========================================
 model_results = {}
 for name, (func, p0) in MODELS.items():
     try:
@@ -86,6 +80,9 @@ for name, (func, p0) in MODELS.items():
 best_name = max(model_results, key=lambda k: model_results[k]["r2"])
 best = model_results[best_name]
 
+# ==========================================
+# 5. TARGET CROSSING FORECAST
+# ==========================================
 def solve_crossing(model, target_wear, conf_pct, max_days=3650):
     func, popt, dof, std = model["func"], model["popt"], model["dof"], model["resid_std"]
     t_val = stats.t.ppf((1 + conf_pct / 100.0) / 2, dof) if dof >= 1 else 0.0
@@ -112,6 +109,7 @@ f_Min = solve_crossing(best, WEAR_TARGET_MIN, CONFIDENCE_PCT, max_horizon)
 def fmt_d(t0, d_days):
     return (t0 + timedelta(days=d_days)).strftime("%Y-%m-%d") if d_days is not None else "Out of Bounds"
 
+# Metrics
 n_recent = min(5, len(df))
 avg_raw_curr = df["raw_um"].tail(n_recent).mean()
 avg_wear_curr = df["wear_um"].tail(n_recent).mean()
@@ -120,7 +118,9 @@ avg_wear_rate = (wear_um[-1] - wear_um[0]) / days[-1] if days[-1] > 0 else 0
 eps = 0.01
 inst_wear_rate = (best["func"](days[-1] + eps, *best["popt"]) - best["func"](days[-1] - eps, *best["popt"])) / (2 * eps)
 
-# Generate Plot in English
+# ==========================================
+# 6. PLOT GENERATION
+# ==========================================
 fig, ax = plt.subplots(figsize=(10, 5.5), dpi=150)
 ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=22, alpha=0.8, label="Historical Observations (Measured)")
 
@@ -168,6 +168,9 @@ plot_img_path = "clearance_trend_plot_en.png"
 fig.savefig(plot_img_path, dpi=150, bbox_inches="tight")
 plt.close(fig)
 
+# ==========================================
+# 7. EXCEL REPORT GENERATION (OPENPYXL)
+# ==========================================
 wb = openpyxl.Workbook()
 
 font_header = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
@@ -185,7 +188,7 @@ border_thin = Border(left=thin_border_side, right=thin_border_side, top=thin_bor
 align_center = Alignment(horizontal="center", vertical="center")
 align_right = Alignment(horizontal="right", vertical="center")
 
-# TAB 1
+# Tab 1: Summary & Prognosis
 ws_summary = wb.active
 ws_summary.title = "Summary & Prognosis"
 ws_summary.views.sheetView[0].showGridLines = True
@@ -220,7 +223,6 @@ for r_idx, row in enumerate(s1_data, start=6):
     cell_val.alignment = align_right
     if row[2] == "%": cell_val.number_format = "0.0%"
     elif isinstance(row[1], float): cell_val.number_format = "0.000" if "Clearance" in row[0] else "0.0"
-    
     ws_summary.cell(row=r_idx, column=4, value=row[2]).alignment = align_center
     ws_summary.cell(row=r_idx, column=5, value=row[3]).font = font_regular
     for col_idx in range(2, 6): ws_summary.cell(row=r_idx, column=col_idx).border = border_thin
@@ -293,7 +295,7 @@ ws_summary.add_image(img, "B29")
 col_widths_summary = {"A": 3, "B": 32, "C": 18, "D": 15, "E": 20, "F": 20, "G": 20}
 for col, w in col_widths_summary.items(): ws_summary.column_dimensions[col].width = w
 
-# TAB 2
+# Tab 2: Model Evaluation
 ws_models = wb.create_sheet(title="Model Evaluation")
 ws_models.views.sheetView[0].showGridLines = True
 
@@ -329,7 +331,7 @@ for m_name, res in model_results.items():
 col_widths_m = {"A": 3, "B": 22, "C": 22, "D": 15, "E": 22, "F": 25, "G": 18}
 for col, w in col_widths_m.items(): ws_models.column_dimensions[col].width = w
 
-# TAB 3
+# Tab 3: Historical & Forecast Data
 ws_data = wb.create_sheet(title="Historical & Forecast Data")
 ws_data.views.sheetView[0].showGridLines = True
 
@@ -356,6 +358,7 @@ for i, r in df.iterrows():
     for c in range(1, 7): ws_data.cell(row=curr_row, column=c).border = border_thin
     curr_row += 1
 
+# Forecast Points
 x_future = np.linspace(days[-1] + 1, x_max_plot, 30)
 y_future_wear = best["func"](x_future, *best["popt"])
 y_future_clear = NEW_CLEARANCE - (y_future_wear / 1000.0)
@@ -384,4 +387,3 @@ for col, w in col_widths_d.items(): ws_data.column_dimensions[col].width = w
 
 output_excel_path = "Piston_Rod_Clearance_Prognostic_Report_EN.xlsx"
 wb.save(output_excel_path)
-print("English version generated successfully.")
