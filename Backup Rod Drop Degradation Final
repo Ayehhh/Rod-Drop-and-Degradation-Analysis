@@ -305,7 +305,7 @@ ws1["B13"].font = HEADER_FONT
 ws1["B13"].fill = STEEL_FILL
 ws1["B13"].alignment = Alignment(horizontal="center", vertical="center")
 
-headers = ["Threshold Level", "Alarm Threshold (um)", "Estimated Calculated Clearance (mm)", "Earliest Predicted Date", "Expected Predcited Date", "Latest Predicted Date"]
+headers = ["Threshold Level", "Alarm Threshold (um)", "Estimated Calculated Clearance (mm)", "Earliest Predicted Date", "Expected Predicted Date", "Latest Predicted Date"]
 for col_num, h in enumerate(headers, start=2):
     c = ws1.cell(row=14, column=col_num, value=h)
     c.font = HEADER_FONT
