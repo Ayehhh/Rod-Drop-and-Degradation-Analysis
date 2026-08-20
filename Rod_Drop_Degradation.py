@@ -37,10 +37,10 @@ data_source = st.sidebar.selectbox(
 df = None
 
 if data_source == "User Specified":
-    st.sidebar.subheader("Upload Dataset")
+    st.sidebar.subheader("2. Upload Dataset")
     uploaded_file = st.sidebar.file_uploader("Upload Excel Dataset (.xlsx / .xls)", type=["xlsx", "xls"])
 
-    st.sidebar.subheader("Engineering Parameters")
+    st.sidebar.subheader("3. Engineering Parameters")
     NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
     BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
     BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
