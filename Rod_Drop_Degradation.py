@@ -104,8 +104,10 @@ t0 = df["timestamp"].iloc[0]
 days = (df["timestamp"] - t0).dt.total_seconds().values / 86400.0
 wear_um = df["wear_um"].values
 
+latest_raw_um = df["raw_um"].iloc[-1]
 latest_wear_um = df["wear_um"].iloc[-1]
 latest_clearance_mm = df["clearance_mm"].iloc[-1]
+min_hist_clearance_mm = df["clearance_mm"].min()
 
 # ==========================================
 # 3. EXPANDED REGRESSION MODELING SUITE
@@ -174,8 +176,10 @@ best = model_results[best_name]
 # ==========================================
 st.subheader("📊 Model Comparison & Fit Metrics")
 
-with st.expander("💡 Technical Guidance: Understanding Model Selection & Metrics"):
+with st.expander("💡 Technical Guidance: Metrics & RUL Definition"):
     st.markdown("""
+    * **Remaining Useful Life (RUL):** The estimated operational time remaining before rider ring wear breaches an alarm threshold or minimum clearance limit.
+      $$\\text{RUL (Days)} = \\text{Expected Breach Date} - \\text{Last Observed Data Date}$$
     * **Residual Standard Deviation (Residual Std in µm):** Measures the physical noise or distance between actual rod drop readings and fitted model predictions. Lower values signify higher accuracy.
     * **$R^2$ Score (Coefficient of Determination):** Quantifies how well the variance in degradation is captured by the time variable ($1.0$ is perfect fit).
     * **Model Selection Recommendation:** 
@@ -195,7 +199,7 @@ for name, res in model_results.items():
 st.dataframe(pd.DataFrame(model_comparison_data), use_container_width=True)
 
 # ==========================================
-# 5. PROGNOSTIC BREACH CALCULATION
+# 5. PROGNOSTIC BREACH CALCULATION & METRICS
 # ==========================================
 def solve_crossing(model, target_wear, conf_pct, max_days=3650):
     func, popt, dof, std = model["func"], model["popt"], model["dof"], model["resid_std"]
@@ -220,11 +224,12 @@ f_L = solve_crossing(best, WEAR_TARGET_L, CONFIDENCE_PCT, max_horizon)
 f_LL = solve_crossing(best, WEAR_TARGET_LL, CONFIDENCE_PCT, max_horizon)
 f_Min = solve_crossing(best, WEAR_TARGET_MIN, CONFIDENCE_PCT, max_horizon)
 
-m1, m2, m3, m4 = st.columns(4)
+m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Selected Model", f"{best_name}", f"R² = {best['r2']:.4f}")
-m2.metric("Latest Wear", f"{latest_wear_um:.1f} µm")
+m2.metric("Current Average Probe Position", f"{latest_raw_um:.1f} µm")
 m3.metric("Current Clearance", f"{latest_clearance_mm:.3f} mm")
-m4.metric("Confidence Level", f"{CONFIDENCE_PCT:.1f}%")
+m4.metric("Min Historical Clearance", f"{min_hist_clearance_mm:.3f} mm")
+m5.metric("Confidence Level", f"{CONFIDENCE_PCT:.1f}%")
 
 st.subheader("📋 Prognostic Breach & RUL Projection Summary")
 prognosis_data = []
@@ -257,8 +262,6 @@ st.table(pd.DataFrame(prognosis_data))
 # ==========================================
 # 6. VISUALIZATION
 # ==========================================
-st.subheader("📈 Prognostic Trend Plot")
-
 fig, ax = plt.subplots(figsize=(10, 5), dpi=150)
 ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=25, alpha=0.8, label="Measured Observations")
 
@@ -290,144 +293,3 @@ fig.tight_layout()
 plot_img_path = os.path.join(OUTPUT_DIR, "clearance_trend_plot_en.png")
 fig.savefig(plot_img_path, dpi=150, bbox_inches="tight")
 st.pyplot(fig)
-
-# ==========================================
-# 7. REPORT GENERATION
-# ==========================================
-pdf_file_path = os.path.join(OUTPUT_DIR, f"Piston_Rod_Clearance_Prognostic_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
-
-def generate_pdf_report(filename):
-    doc = SimpleDocTemplate(filename, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
-    styles = getSampleStyleSheet()
-    story = []
-
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=13, textColor=colors.HexColor('#1B365D'), alignment=1, spaceAfter=12)
-    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor('#FFFFFF'), backColor=colors.HexColor('#4A777A'), spaceBefore=10, spaceAfter=6, leftIndent=4)
-
-    hdr_style = ParagraphStyle('TH', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=1)
-    hdr_style_l = ParagraphStyle('THL', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=0)
-    body_style = ParagraphStyle('TD', fontName='Helvetica', fontSize=8, leading=10, alignment=1)
-    body_style_l = ParagraphStyle('TDL', fontName='Helvetica', fontSize=8, leading=10, alignment=0)
-
-    story.append(Paragraph("DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR ROD DROP AND ESTIMATED CLEARANCE", title_style))
-    story.append(Spacer(1, 6))
-
-    # SECTION 1: TECHNICAL SPECIFICATIONS
-    story.append(Paragraph("TECHNICAL SPECIFICATIONS & THRESHOLDS", section_style))
-    spec_data = [
-        [Paragraph("Parameter", hdr_style_l), Paragraph("Value", hdr_style), Paragraph("Unit", hdr_style)],
-        [Paragraph("As-Left Bottom Piston-to-Liner Clearance", body_style_l), Paragraph(f"{NEW_CLEARANCE:.3f}", body_style), Paragraph("mm", body_style)],
-        [Paragraph("Bently Nevada L Alarm Threshold", body_style_l), Paragraph(f"{BN_L_THRESHOLD:.1f}", body_style), Paragraph("um", body_style)],
-        [Paragraph("Bently Nevada LL Alarm Threshold", body_style_l), Paragraph(f"{BN_LL_THRESHOLD:.1f}", body_style), Paragraph("um", body_style)],
-        [Paragraph("Minimum Allowable Clearance (OEM)", body_style_l), Paragraph(f"{MIN_CLEARANCE:.3f}", body_style), Paragraph("mm", body_style)],
-        [Paragraph("Calculated L Clearance Limit", body_style_l), Paragraph(f"{CLEARANCE_AT_L:.3f}", body_style), Paragraph("mm", body_style)],
-        [Paragraph("Calculated LL Clearance Limit", body_style_l), Paragraph(f"{CLEARANCE_AT_LL:.3f}", body_style), Paragraph("mm", body_style)],
-        [Paragraph("Statistical Confidence Level", body_style_l), Paragraph(f"{CONFIDENCE_PCT:.1f}", body_style), Paragraph("%", body_style)]
-    ]
-    t_spec = Table(spec_data, colWidths=[270, 130, 100])
-    t_spec.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-    ]))
-    story.append(t_spec)
-    story.append(Spacer(1, 8))
-
-    # SECTION 2: MODEL COMPARISON
-    story.append(Paragraph("MODEL COMPARISON & FIT METRICS", section_style))
-    comp_headers = [
-        Paragraph("Model Name", hdr_style_l), 
-        Paragraph("R² Score", hdr_style), 
-        Paragraph("Residual Std (um)", hdr_style), 
-        Paragraph("Status", hdr_style)
-    ]
-    comp_table_data = [comp_headers]
-    for row in model_comparison_data:
-        comp_table_data.append([
-            Paragraph(row["Model Name"], body_style_l),
-            Paragraph(row["R² Score"], body_style),
-            Paragraph(row["Residual Std (µm)"], body_style),
-            Paragraph(row["Status"], body_style)
-        ])
-
-    t_comp = Table(comp_table_data, colWidths=[130, 100, 120, 150])
-    t_comp.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-    ]))
-    story.append(t_comp)
-    story.append(Spacer(1, 8))
-
-    # SECTION 3: PROGNOSTIC BREACH
-    story.append(Paragraph("PROGNOSTIC BREACH PROJECTION SUMMARY", section_style))
-    prog_headers = [
-        Paragraph("Threshold Level", hdr_style_l), 
-        Paragraph("Alarm Threshold (um)", hdr_style), 
-        Paragraph("Target Clearance (mm)", hdr_style), 
-        Paragraph("Earliest Date", hdr_style), 
-        Paragraph("Expected Date", hdr_style), 
-        Paragraph("Latest Date", hdr_style)
-    ]
-    prog_table_data = [prog_headers]
-    
-    for row in prognosis_data:
-        prog_table_data.append([
-            Paragraph(row["Threshold Level"], body_style_l), 
-            Paragraph(row["Alarm Threshold (um)"], body_style), 
-            Paragraph(row["Target Clearance (mm)"], body_style), 
-            Paragraph(row["Earliest Date"], body_style), 
-            Paragraph(row["Expected Date"], body_style), 
-            Paragraph(row["Latest Date"], body_style)
-        ])
-
-    t_prog = Table(prog_table_data, colWidths=[90, 85, 85, 80, 80, 80])
-    t_prog.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
-    ]))
-    story.append(t_prog)
-
-    story.append(PageBreak())
-
-    # SECTION 4 (PAGE 2): VISUALIZATION
-    story.append(Paragraph("PROGNOSTIC TREND VISUALISATION", section_style))
-    story.append(Spacer(1, 10))
-    story.append(RLImage(plot_img_path, width=500, height=250))
-
-    doc.build(story)
-
-generate_pdf_report(pdf_file_path)
-
-# Archive ZIP Package
-zip_base_name = os.path.join(os.getcwd(), "Prognosis_Output_Files_Package")
-zip_archive_path = shutil.make_archive(zip_base_name, 'zip', OUTPUT_DIR)
-
-with open(pdf_file_path, "rb") as f:
-    pdf_bytes = f.read()
-
-with open(zip_archive_path, "rb") as f:
-    zip_bytes = f.read()
-
-# Download Section
-st.subheader("📥 Download Prognosis Reports")
-dcol1, dcol2 = st.columns(2)
-dcol1.download_button(
-    label="📄 Download Comprehensive PDF Report",
-    data=pdf_bytes,
-    file_name=os.path.basename(pdf_file_path),
-    mime="application/pdf"
-)
-dcol2.download_button(
-    label="📦 Download Complete ZIP Package (PDF + Image)",
-    data=zip_bytes,
-    file_name=f"Prognosis_Output_Files_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-    mime="application/zip"
-)
