@@ -74,7 +74,10 @@ else:  # Sample Data Mode
         "raw_um": raw_readings
     })
 
+# Setup Output Directory (Clean directory to keep ZIP lightweight)
 OUTPUT_DIR = "Prognosis_Output_Files"
+if os.path.exists(OUTPUT_DIR):
+    shutil.rmtree(OUTPUT_DIR)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 CLEARANCE_AT_L = NEW_CLEARANCE - (abs(BN_L_THRESHOLD) / 1000.0)
@@ -190,7 +193,13 @@ st.subheader("📋 Prognostic Breach & RUL Projection Summary")
 prognosis_data = []
 latest_day = days[-1]
 
-for label, (e, c, l), target_c in [("L Alarm", f_L, CLEARANCE_AT_L), ("LL Alarm", f_LL, CLEARANCE_AT_LL), ("OEM Min Limit", f_Min, MIN_CLEARANCE)]:
+targets_info = [
+    ("L Alarm", BN_L_THRESHOLD, f_L, CLEARANCE_AT_L),
+    ("LL Alarm", BN_LL_THRESHOLD, f_LL, CLEARANCE_AT_LL),
+    ("OEM Min Limit", -WEAR_TARGET_MIN, f_Min, MIN_CLEARANCE)
+]
+
+for label, raw_alarm, (e, c, l), target_c in targets_info:
     c_date = (t0 + timedelta(days=c)).strftime('%Y-%m-%d') if c else "N/A"
     e_date = (t0 + timedelta(days=e)).strftime('%Y-%m-%d') if e else "N/A"
     l_date = (t0 + timedelta(days=l)).strftime('%Y-%m-%d') if l else "N/A"
@@ -198,12 +207,14 @@ for label, (e, c, l), target_c in [("L Alarm", f_L, CLEARANCE_AT_L), ("LL Alarm"
 
     prognosis_data.append({
         "Threshold Level": label,
+        "Alarm Threshold (um)": f"{raw_alarm:.1f}",
         "Target Clearance (mm)": f"{target_c:.3f}",
         "Earliest Date": e_date,
         "Expected Date": c_date,
         "Latest Date": l_date,
         "RUL (Days)": rul_days
     })
+
 st.table(pd.DataFrame(prognosis_data))
 
 # ==========================================
@@ -253,24 +264,24 @@ def generate_pdf_report(filename):
     styles = getSampleStyleSheet()
     story = []
 
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=14, textColor=colors.HexColor('#1B365D'), alignment=1, spaceAfter=12)
-    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=11, textColor=colors.HexColor('#FFFFFF'), backColor=colors.HexColor('#4A777A'), spaceBefore=10, spaceAfter=6, leftIndent=4)
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=13, textColor=colors.HexColor('#1B365D'), alignment=1, spaceAfter=12)
+    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor('#FFFFFF'), backColor=colors.HexColor('#4A777A'), spaceBefore=10, spaceAfter=6, leftIndent=4)
 
     story.append(Paragraph("DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR ROD DROP AND ESTIMATED CLEARANCE", title_style))
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
 
     story.append(Paragraph("TECHNICAL SPECIFICATIONS & THRESHOLDS", section_style))
     spec_data = [
         ["Parameter", "Value", "Unit"],
         ["As-Left Bottom Piston-to-Liner Clearance", f"{NEW_CLEARANCE:.3f}", "mm"],
-        ["Bently Nevada L Alarm Threshold", f"{BN_L_THRESHOLD:.1f}", "µm"],
-        ["Bently Nevada LL Alarm Threshold", f"{BN_LL_THRESHOLD:.1f}", "µm"],
+        ["Bently Nevada L Alarm Threshold", f"{BN_L_THRESHOLD:.1f}", "um"],
+        ["Bently Nevada LL Alarm Threshold", f"{BN_LL_THRESHOLD:.1f}", "um"],
         ["Minimum Allowable Clearance (OEM)", f"{MIN_CLEARANCE:.3f}", "mm"],
         ["Calculated L Clearance Limit", f"{CLEARANCE_AT_L:.3f}", "mm"],
         ["Calculated LL Clearance Limit", f"{CLEARANCE_AT_LL:.3f}", "mm"],
         ["Statistical Confidence Level", f"{CONFIDENCE_PCT:.1f}", "%"]
     ]
-    t_spec = Table(spec_data, colWidths=[260, 140, 100])
+    t_spec = Table(spec_data, colWidths=[270, 130, 100])
     t_spec.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -279,41 +290,50 @@ def generate_pdf_report(filename):
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
     ]))
     story.append(t_spec)
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 10))
 
     story.append(Paragraph("PROGNOSTIC BREACH PROJECTION SUMMARY", section_style))
-    prog_headers = ["Threshold Level", "Estimated Calculated Clearance (mm)", "Earliest Date", "Expected Date", "Latest Date"]
+    prog_headers = ["Threshold Level", "Alarm Threshold (um)", "Target Clearance (mm)", "Earliest Date", "Expected Date", "Latest Date"]
     prog_table_data = [prog_headers]
+    
     for row in prognosis_data:
-        prog_table_data.append([row["Threshold Level"], row["Estimated Calculated Clearance (mm)"], row["Earliest Date"], row["Expected Date"], row["Latest Date"]])
+        prog_table_data.append([
+            row["Threshold Level"], 
+            row["Alarm Threshold (um)"], 
+            row["Target Clearance (mm)"], 
+            row["Earliest Date"], 
+            row["Expected Date"], 
+            row["Latest Date"]
+        ])
 
-    t_prog = Table(prog_table_data, colWidths=[130, 90, 95, 95, 90])
+    t_prog = Table(prog_table_data, colWidths=[100, 85, 85, 75, 75, 80])
     t_prog.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8.5),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
         ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
     ]))
     story.append(t_prog)
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 10))
 
     story.append(Paragraph("PROGNOSTIC TREND VISUALISATION", section_style))
-    story.append(Spacer(1, 6))
-    story.append(RLImage(plot_img_path, width=500, height=250))
+    story.append(Spacer(1, 4))
+    story.append(RLImage(plot_img_path, width=500, height=230))
 
     doc.build(story)
 
 generate_pdf_report(pdf_file_path)
 
 # Archive PDF and Image into ZIP
-zip_path = f"{OUTPUT_DIR}.zip"
-shutil.make_archive(OUTPUT_DIR, 'zip', OUTPUT_DIR)
+zip_base_name = os.path.join(os.getcwd(), "Prognosis_Output_Files_Package")
+zip_archive_path = shutil.make_archive(zip_base_name, 'zip', OUTPUT_DIR)
 
 with open(pdf_file_path, "rb") as f:
     pdf_bytes = f.read()
 
-with open(zip_path, "rb") as f:
+with open(zip_archive_path, "rb") as f:
     zip_bytes = f.read()
 
 # Download Buttons Section
