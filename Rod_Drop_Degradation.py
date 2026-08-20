@@ -256,7 +256,7 @@ def generate_pdf_report(filename):
     title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=14, textColor=colors.HexColor('#1B365D'), alignment=1, spaceAfter=12)
     section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=11, textColor=colors.HexColor('#FFFFFF'), backColor=colors.HexColor('#4A777A'), spaceBefore=10, spaceAfter=6, leftIndent=4)
 
-    story.append(Paragraph("DEGRADATION AND PROGNOSTIC ANALYSIS REPORT", title_style))
+    story.append(Paragraph("DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR ROD DROP AND ESTIMATED CLEARANCE", title_style))
     story.append(Spacer(1, 10))
 
     story.append(Paragraph("TECHNICAL SPECIFICATIONS & THRESHOLDS", section_style))
@@ -282,10 +282,10 @@ def generate_pdf_report(filename):
     story.append(Spacer(1, 12))
 
     story.append(Paragraph("PROGNOSTIC BREACH PROJECTION SUMMARY", section_style))
-    prog_headers = ["Threshold Level", "Target Clearance", "Earliest Date", "Expected Date", "Latest Date"]
+    prog_headers = ["Threshold Level", "Estimated Calculated Clearance (mm)", "Earliest Date", "Expected Date", "Latest Date"]
     prog_table_data = [prog_headers]
     for row in prognosis_data:
-        prog_table_data.append([row["Threshold Level"], row["Target Clearance (mm)"], row["Earliest Date"], row["Expected Date"], row["Latest Date"]])
+        prog_table_data.append([row["Threshold Level"], row["Estimated Calculated Clearance (mm)"], row["Earliest Date"], row["Expected Date"], row["Latest Date"]])
 
     t_prog = Table(prog_table_data, colWidths=[130, 90, 95, 95, 90])
     t_prog.setStyle(TableStyle([
@@ -298,7 +298,7 @@ def generate_pdf_report(filename):
     story.append(t_prog)
     story.append(Spacer(1, 12))
 
-    story.append(Paragraph("PROGNOSTIC TREND VISUALIZATION", section_style))
+    story.append(Paragraph("PROGNOSTIC TREND VISUALISATION", section_style))
     story.append(Spacer(1, 6))
     story.append(RLImage(plot_img_path, width=500, height=250))
 
