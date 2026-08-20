@@ -1,18 +1,19 @@
 import os
 import io
 import shutil
-import openpyxl
-from openpyxl.drawing.image import Image
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
 import pandas as pd
 import numpy as np
 from scipy import stats
 from scipy.optimize import brentq, curve_fit
 import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 from datetime import datetime, timedelta
 import streamlit as st
+
+# ReportLab imports for PDF generation
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # Set Streamlit Page Config
 st.set_page_config(
@@ -38,7 +39,7 @@ df = None
 if data_source == "User Specified":
     st.sidebar.subheader("Upload Dataset")
     uploaded_file = st.sidebar.file_uploader("Upload Excel Dataset (.xlsx / .xls)", type=["xlsx", "xls"])
-    
+
     st.sidebar.subheader("Engineering Parameters")
     NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
     BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
@@ -54,7 +55,7 @@ if data_source == "User Specified":
 
 else:  # Sample Data Mode
     st.sidebar.success("✅ Running with Synthetic Historical Data")
-    
+
     st.sidebar.subheader("Adjust Thresholds (Editable)")
     NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
     BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
@@ -62,23 +63,20 @@ else:  # Sample Data Mode
     MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.500, step=0.001, format="%.3f")
     CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
 
-    # Generate realistic historical sample data automatically
     np.random.seed(42)
     dates = pd.date_range(end=datetime.now(), periods=18, freq='30D')
     days_passed = np.arange(18) * 30
     synthetic_wear = 0.05 * (days_passed ** 1.3) + np.random.normal(0, 15, 18)
     raw_readings = -np.abs(synthetic_wear)
-    
+
     df = pd.DataFrame({
         "timestamp": dates,
         "raw_um": raw_readings
     })
 
-# Setup Output Directory
 OUTPUT_DIR = "Prognosis_Output_Files"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Calculate Target Clearances and Wear Limits
 CLEARANCE_AT_L = NEW_CLEARANCE - (abs(BN_L_THRESHOLD) / 1000.0)
 CLEARANCE_AT_LL = NEW_CLEARANCE - (abs(BN_LL_THRESHOLD) / 1000.0)
 WEAR_TARGET_L = abs(BN_L_THRESHOLD)
@@ -107,20 +105,22 @@ latest_wear_um = df["wear_um"].iloc[-1]
 latest_clearance_mm = df["clearance_mm"].iloc[-1]
 
 # ==========================================
-# 3. REGRESSION MODELING
+# 3. REGRESSION MODELING (INCL. LOG-NORMAL)
 # ==========================================
 def _lin(x, a, b): return a * x + b
 def _quad(x, a, b, c): return a * x**2 + b * x + c
 def _power(x, a, b): return a * np.power(np.maximum(x, 1e-6), b)
 def _expo(x, a, b): return a * np.exp(np.clip(b * x, -100, 100))
 def _logf(x, a, b): return a * np.log(x + 1.0) + b
+def _lognorm(x, a, shape, scale): return a * stats.lognorm.cdf(np.maximum(x, 1e-6), s=shape, scale=scale)
 
 MODELS = {
     "Linear": (_lin, [1.0, 0.0]),
     "Quadratic": (_quad, [0.01, 1.0, 0.0]),
     "Power": (_power, [1.0, 1.0]),
     "Exponential": (_expo, [1.0, 0.01]),
-    "Logarithmic": (_logf, [1.0, 0.0])
+    "Logarithmic": (_logf, [1.0, 0.0]),
+    "Log-Normal": (_lognorm, [np.max(wear_um) * 1.5, 0.8, np.mean(days) + 1.0])
 }
 
 model_results = {}
@@ -144,7 +144,7 @@ best_name = max(model_results, key=lambda k: model_results[k]["r2"])
 best = model_results[best_name]
 
 # ==========================================
-# 4. PROGNOSTIC BREACH CALCULATION & MODEL EVALUATION
+# 4. PROGNOSTIC BREACH CALCULATION
 # ==========================================
 st.subheader("📊 Model Comparison & Fit Metrics")
 model_comparison_data = []
@@ -180,7 +180,6 @@ f_L = solve_crossing(best, WEAR_TARGET_L, CONFIDENCE_PCT, max_horizon)
 f_LL = solve_crossing(best, WEAR_TARGET_LL, CONFIDENCE_PCT, max_horizon)
 f_Min = solve_crossing(best, WEAR_TARGET_MIN, CONFIDENCE_PCT, max_horizon)
 
-# Display Key Metrics
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Selected Model", f"{best_name}", f"R² = {best['r2']:.4f}")
 m2.metric("Latest Wear", f"{latest_wear_um:.1f} µm")
@@ -196,7 +195,7 @@ for label, (e, c, l), target_c in [("L Alarm", f_L, CLEARANCE_AT_L), ("LL Alarm"
     e_date = (t0 + timedelta(days=e)).strftime('%Y-%m-%d') if e else "N/A"
     l_date = (t0 + timedelta(days=l)).strftime('%Y-%m-%d') if l else "N/A"
     rul_days = f"{int(c - latest_day)} Days" if c and c >= latest_day else "Exceeded / N/A"
-    
+
     prognosis_data.append({
         "Threshold Level": label,
         "Target Clearance (mm)": f"{target_c:.3f}",
@@ -208,14 +207,12 @@ for label, (e, c, l), target_c in [("L Alarm", f_L, CLEARANCE_AT_L), ("LL Alarm"
 st.table(pd.DataFrame(prognosis_data))
 
 # ==========================================
-# 5. GENERATE VISUALIZATIONS
+# 5. GENERATE VISUALIZATION (TREND ONLY)
 # ==========================================
-st.subheader("📈 Prognostic Trend & Cross-Section Schematic")
-col1, col2 = st.columns(2)
+st.subheader("📈 Prognostic Trend Plot")
 
-# Trend Chart
-fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
-ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=22, alpha=0.8, label="Measured Observations")
+fig, ax = plt.subplots(figsize=(10, 5), dpi=150)
+ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=25, alpha=0.8, label="Measured Observations")
 
 candidate_days = [d for d in [f_L[1], f_LL[1], f_Min[1]] if d is not None]
 x_max_plot = max(candidate_days) * 1.15 if candidate_days else days[-1] * 2
@@ -237,219 +234,85 @@ ax.axhline(MIN_CLEARANCE, color="black", linestyle=":", linewidth=1.5, label=f"M
 ax.set_ylabel("Clearance (mm)")
 ax.set_xlabel("Date")
 ax.set_title("Piston Rod Clearance Prognostic Trend", fontweight="bold")
-ax.legend(loc="lower left", fontsize=7)
+ax.legend(loc="lower left", fontsize=8)
 ax.grid(True, linestyle=":", alpha=0.6)
 fig.autofmt_xdate()
 fig.tight_layout()
 
 plot_img_path = os.path.join(OUTPUT_DIR, "clearance_trend_plot_en.png")
 fig.savefig(plot_img_path, dpi=150, bbox_inches="tight")
-col1.pyplot(fig)
-
-# Schematic Drawing
-def generate_piston_head_schematic(new_clear, current_clear, l_clear, ll_clear, min_clear, current_wear):
-    fig_s, ax_s = plt.subplots(figsize=(8, 6), dpi=150)
-    ax_s.set_xlim(-7.5, 7.5)
-    ax_s.set_ylim(-6.5, 4.5)
-    ax_s.axis("off")
-
-    liner_radius = 3.2
-    liner_center_y = 0.5
-    liner = patches.Circle((0, liner_center_y), liner_radius, linewidth=3, edgecolor="#1B365D", facecolor="#F4F6F9", zorder=1)
-    ax_s.add_patch(liner)
-
-    ax_s.axhline(liner_center_y, color="#BDC3C7", linestyle=":", linewidth=1, zorder=2)
-    ax_s.axvline(0, color="#BDC3C7", linestyle=":", linewidth=1, zorder=2)
-
-    piston_radius = 2.6
-    y_piston_center = liner_center_y - (current_wear / 1000.0) * 0.8
-    piston = patches.Circle((0, y_piston_center), piston_radius, linewidth=2.5, edgecolor="#2C3E50", facecolor="#BDC3C7", zorder=3)
-    ax_s.add_patch(piston)
-    ax_s.text(0, y_piston_center + 0.6, "PISTON HEAD\n(Front View)", fontsize=9, fontweight="bold", color="#1B365D", ha="center", va="center", zorder=4)
-
-    rider_ring = patches.Wedge((0, y_piston_center), piston_radius, 225, 315, width=0.35, edgecolor="#D35400", facecolor="#E67E22", zorder=4)
-    ax_s.add_patch(rider_ring)
-
-    y_as_new = -2.8
-    y_current = -3.4
-    y_L = -4.0
-    y_LL = -4.6
-    y_min = -5.2
-
-    ax_s.hlines(y=y_as_new, xmin=-5.5, xmax=-0.3, colors="#27AE60", linestyles="--", linewidth=1.5, zorder=5)
-    ax_s.hlines(y=y_current, xmin=-5.5, xmax=0.3, colors="#2980B9", linestyles="-.", linewidth=1.8, zorder=5)
-    ax_s.hlines(y=y_L, xmin=0.3, xmax=5.5, colors="#F39C12", linestyles="--", linewidth=1.5, zorder=5)
-    ax_s.hlines(y=y_LL, xmin=0.3, xmax=5.5, colors="#E74C3C", linestyles="--", linewidth=1.5, zorder=5)
-    ax_s.hlines(y=y_min, xmin=-5.5, xmax=5.5, colors="#8E44AD", linestyles="-", linewidth=2.0, zorder=5)
-
-    ax_s.text(-5.7, y_as_new, f"As-New: {new_clear:.3f} mm", fontsize=8, color="#27AE60", ha="right", va="center")
-    ax_s.text(-5.7, y_current, f"Est. Current: {current_clear:.3f} mm", fontsize=8, color="#2980B9", ha="right", va="center")
-    ax_s.text(5.7, y_L, f"L Alarm: {l_clear:.3f} mm", fontsize=8, color="#F39C12", ha="left", va="center")
-    ax_s.text(5.7, y_LL, f"LL Alarm: {ll_clear:.3f} mm", fontsize=8, color="#E74C3C", ha="left", va="center")
-    ax_s.text(5.7, y_min, f"OEM Min: {min_clear:.3f} mm", fontsize=8, color="#8E44AD", ha="left", va="center")
-
-    ax_s.set_title("Cross-Section Clearance Schematic", fontsize=11, fontweight="bold")
-    plt.tight_layout()
-    schematic_img_path = os.path.join(OUTPUT_DIR, "piston_head_schematic.png")
-    fig_s.savefig(schematic_img_path, dpi=150, bbox_inches="tight")
-    plt.close()
-    return fig_s, schematic_img_path
-
-fig_schematic, schematic_img_path = generate_piston_head_schematic(NEW_CLEARANCE, latest_clearance_mm, CLEARANCE_AT_L, CLEARANCE_AT_LL, MIN_CLEARANCE, latest_wear_um)
-col2.pyplot(fig_schematic)
+st.pyplot(fig)
 
 # ==========================================
-# 6. EXCEL REPORT GENERATION & DOWNLOAD
+# 6. PDF REPORT GENERATION & ZIP PACKAGING
 # ==========================================
-wb = openpyxl.Workbook()
+pdf_file_path = os.path.join(OUTPUT_DIR, f"Piston_Rod_Clearance_Prognostic_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
 
-# Sheet 1: Executive Summary & Prognosis
-ws1 = wb.active
-ws1.title = "Summary & Prognosis"
-ws1.views.sheetView[0].showGridLines = True
+def generate_pdf_report(filename):
+    doc = SimpleDocTemplate(filename, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    styles = getSampleStyleSheet()
+    story = []
 
-NAVY_FILL = PatternFill(start_color="1B365D", end_color="1B365D", fill_type="solid")
-STEEL_FILL = PatternFill(start_color="4A777A", end_color="4A777A", fill_type="solid")
-TITLE_FONT = Font(name="Calibri", size=16, bold=True, color="FFFFFF")
-HEADER_FONT = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
-BOLD_FONT = Font(name="Calibri", size=11, bold=True)
-REGULAR_FONT = Font(name="Calibri", size=11)
+    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=14, textColor=colors.HexColor('#1B365D'), alignment=1, spaceAfter=12)
+    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=11, textColor=colors.HexColor('#FFFFFF'), backColor=colors.HexColor('#4A777A'), spaceBefore=10, spaceAfter=6, leftIndent=4)
 
-ws1.merge_cells("B2:G2")
-ws1["B2"] = "DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR PISTON ROD DROP AND ESTIMATED CLEARANCE"
-ws1["B2"].font = TITLE_FONT
-ws1["B2"].fill = NAVY_FILL
-ws1["B2"].alignment = Alignment(horizontal="center", vertical="center")
-ws1.row_dimensions[2].height = 40
+    story.append(Paragraph("DEGRADATION AND PROGNOSTIC ANALYSIS REPORT", title_style))
+    story.append(Spacer(1, 10))
 
-ws1.merge_cells("B4:D4")
-ws1["B4"] = "TECHNICAL SPECIFICATIONS & THRESHOLDS"
-ws1["B4"].font = HEADER_FONT
-ws1["B4"].fill = STEEL_FILL
-ws1["B4"].alignment = Alignment(horizontal="center", vertical="center")
+    story.append(Paragraph("TECHNICAL SPECIFICATIONS & THRESHOLDS", section_style))
+    spec_data = [
+        ["Parameter", "Value", "Unit"],
+        ["As-Left Bottom Piston-to-Liner Clearance", f"{NEW_CLEARANCE:.3f}", "mm"],
+        ["Bently Nevada L Alarm Threshold", f"{BN_L_THRESHOLD:.1f}", "µm"],
+        ["Bently Nevada LL Alarm Threshold", f"{BN_LL_THRESHOLD:.1f}", "µm"],
+        ["Minimum Allowable Clearance (OEM)", f"{MIN_CLEARANCE:.3f}", "mm"],
+        ["Calculated L Clearance Limit", f"{CLEARANCE_AT_L:.3f}", "mm"],
+        ["Calculated LL Clearance Limit", f"{CLEARANCE_AT_LL:.3f}", "mm"],
+        ["Statistical Confidence Level", f"{CONFIDENCE_PCT:.1f}", "%"]
+    ]
+    t_spec = Table(spec_data, colWidths=[260, 140, 100])
+    t_spec.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+    ]))
+    story.append(t_spec)
+    story.append(Spacer(1, 12))
 
-params = [
-    ("As-Left Bottom Piston-to-Liner Clearance", NEW_CLEARANCE, "mm"),
-    ("Bently Nevada L Alarm Threshold", BN_L_THRESHOLD, "um"),
-    ("Bently Nevada LL Alarm Threshold", BN_LL_THRESHOLD, "um"),
-    ("Minimum Allowable Clearance (OEM)", MIN_CLEARANCE, "mm"),
-    ("Calculated L Clearance Limit", CLEARANCE_AT_L, "mm"),
-    ("Calculated LL Clearance Limit", CLEARANCE_AT_LL, "mm"),
-    ("Statistical Confidence Level", CONFIDENCE_PCT / 100.0, "%")
-]
+    story.append(Paragraph("PROGNOSTIC BREACH PROJECTION SUMMARY", section_style))
+    prog_headers = ["Threshold Level", "Target Clearance", "Earliest Date", "Expected Date", "Latest Date"]
+    prog_table_data = [prog_headers]
+    for row in prognosis_data:
+        prog_table_data.append([row["Threshold Level"], row["Target Clearance (mm)"], row["Earliest Date"], row["Expected Date"], row["Latest Date"]])
 
-for idx, (param, val, unit) in enumerate(params, start=5):
-    ws1.cell(row=idx, column=2, value=param).font = BOLD_FONT
-    cell = ws1.cell(row=idx, column=3, value=val)
-    cell.font = REGULAR_FONT
-    cell.alignment = Alignment(horizontal="right")
-    if unit == "mm": cell.number_format = "0.000"
-    elif unit == "um": cell.number_format = "0.0"
-    elif unit == "%": cell.number_format = "0.0%"
-    ws1.cell(row=idx, column=4, value=unit).font = REGULAR_FONT
+    t_prog = Table(prog_table_data, colWidths=[130, 90, 95, 95, 90])
+    t_prog.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+    ]))
+    story.append(t_prog)
+    story.append(Spacer(1, 12))
 
-ws1.merge_cells("B13:G13")
-ws1["B13"] = "PROGNOSTIC BREACH PROJECTION SUMMARY"
-ws1["B13"].font = HEADER_FONT
-ws1["B13"].fill = STEEL_FILL
-ws1["B13"].alignment = Alignment(horizontal="center", vertical="center")
+    story.append(Paragraph("PROGNOSTIC TREND VISUALIZATION", section_style))
+    story.append(Spacer(1, 6))
+    story.append(RLImage(plot_img_path, width=500, height=250))
 
-headers = ["Threshold Level", "Alarm Threshold (um)", "Estimated Calculated Clearance (mm)", "Earliest Predicted Date", "Expected Predicted Date", "Latest Predicted Date"]
-for col_num, h in enumerate(headers, start=2):
-    c = ws1.cell(row=14, column=col_num, value=h)
-    c.font = HEADER_FONT
-    c.fill = NAVY_FILL
-    c.alignment = Alignment(horizontal="center", vertical="center")
+    doc.build(story)
 
-prognostic_rows = [
-    ("Bently Nevada L Alarm", WEAR_TARGET_L, CLEARANCE_AT_L, f_L),
-    ("Bently Nevada LL Alarm", WEAR_TARGET_LL, CLEARANCE_AT_LL, f_LL),
-    ("Minimum Allowable Clearance (OEM)", WEAR_TARGET_MIN, MIN_CLEARANCE, f_Min)
-]
+generate_pdf_report(pdf_file_path)
 
-for row_idx, (level, w_tgt, c_tgt, dates_tuple) in enumerate(prognostic_rows, start=15):
-    e_d, c_d, l_d = dates_tuple
-    ws1.cell(row=row_idx, column=2, value=level).font = BOLD_FONT
-    c_w = ws1.cell(row=row_idx, column=3, value=w_tgt)
-    c_w.number_format = "0.0"
-    c_c = ws1.cell(row=row_idx, column=4, value=c_tgt)
-    c_c.number_format = "0.000"
-
-    for c_i, d_val in enumerate([e_d, c_d, l_d], start=5):
-        cell = ws1.cell(row=row_idx, column=c_i)
-        if d_val is not None:
-            cell.value = t0 + timedelta(days=d_val)
-            cell.number_format = "YYYY-MM-DD"
-        else:
-            cell.value = "N/A"
-        cell.alignment = Alignment(horizontal="center")
-
-# Embed Images side-by-side in Executive Summary
-img_trend = Image(plot_img_path)
-ws1.add_image(img_trend, "B20")
-
-img_schematic = Image(schematic_img_path)
-ws1.add_image(img_schematic, "I20")
-
-for col in ws1.columns:
-    max_len = max(len(str(cell.value or '')) for cell in col)
-    col_letter = get_column_letter(col[0].column)
-    ws1.column_dimensions[col_letter].width = max(max_len + 3, 12)
-
-# Sheet 2: Model Evaluation & Historical Data Log
-ws2 = wb.create_sheet(title="Model Evaluation & Data")
-ws2.views.sheetView[0].showGridLines = True
-
-ws2.merge_cells("A1:E1")
-ws2["A1"] = "REGRESSION MODEL EVALUATION & RANKING"
-ws2["A1"].font = HEADER_FONT
-ws2["A1"].fill = NAVY_FILL
-
-m_headers = ["Model Name", "R-Squared (R^2)", "Residual Std Dev (um)", "Degrees of Freedom", "Status"]
-for col_num, h in enumerate(m_headers, start=1):
-    c = ws2.cell(row=2, column=col_num, value=h)
-    c.font = HEADER_FONT
-    c.fill = STEEL_FILL
-
-for r_idx, (m_name, m_info) in enumerate(model_results.items(), start=3):
-    ws2.cell(row=r_idx, column=1, value=m_name).font = BOLD_FONT
-    r2_c = ws2.cell(row=r_idx, column=2, value=m_info["r2"])
-    r2_c.number_format = "0.0000"
-    std_c = ws2.cell(row=r_idx, column=3, value=m_info["resid_std"])
-    std_c.number_format = "0.0"
-    ws2.cell(row=r_idx, column=4, value=m_info["dof"])
-    status_c = ws2.cell(row=r_idx, column=5, value="SELECTED" if m_name == best_name else "Candidate")
-    if m_name == best_name:
-        status_c.font = BOLD_FONT
-
-ws2.cell(row=10, column=1, value="Historical Data Analysis").font = HEADER_FONT
-ws2.cell(row=10, column=1).fill = STEEL_FILL
-
-d_headers = ["Timestamp", "Raw Probe Reading (um)", "Calculated Wear (um)", "Clearance (mm)"]
-for c_i, h in enumerate(d_headers, start=1):
-    c = ws2.cell(row=11, column=c_i, value=h)
-    c.font = HEADER_FONT
-    c.fill = NAVY_FILL
-
-for idx, row in df.iterrows():
-    r = idx + 12
-    ws2.cell(row=r, column=1, value=row["timestamp"]).number_format = "YYYY-MM-DD"
-    ws2.cell(row=r, column=2, value=row["raw_um"]).number_format = "0.0"
-    ws2.cell(row=r, column=3, value=row["wear_um"]).number_format = "0.0"
-    ws2.cell(row=r, column=4, value=row["clearance_mm"]).number_format = "0.000"
-
-for col in ws2.columns:
-    max_len = max(len(str(cell.value or '')) for cell in col)
-    col_letter = get_column_letter(col[0].column)
-    ws2.column_dimensions[col_letter].width = max(max_len + 3, 12)
-
-# Save workbook to memory buffer for Streamlit download
-excel_buffer = io.BytesIO()
-wb.save(excel_buffer)
-excel_buffer.seek(0)
-
+# Archive PDF and Image into ZIP
 zip_path = f"{OUTPUT_DIR}.zip"
 shutil.make_archive(OUTPUT_DIR, 'zip', OUTPUT_DIR)
+
+with open(pdf_file_path, "rb") as f:
+    pdf_bytes = f.read()
+
 with open(zip_path, "rb") as f:
     zip_bytes = f.read()
 
@@ -457,13 +320,13 @@ with open(zip_path, "rb") as f:
 st.subheader("📥 Download Prognosis Reports")
 dcol1, dcol2 = st.columns(2)
 dcol1.download_button(
-    label="📄 Download Comprehensive Excel Report",
-    data=excel_buffer,
-    file_name=f"Piston_Rod_Clearance_Prognostic_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    label="📄 Download Comprehensive PDF Report",
+    data=pdf_bytes,
+    file_name=os.path.basename(pdf_file_path),
+    mime="application/pdf"
 )
 dcol2.download_button(
-    label="📦 Download Complete ZIP Package (Report + Images)",
+    label="📦 Download Complete ZIP Package (PDF + Image)",
     data=zip_bytes,
     file_name=f"Prognosis_Output_Files_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
     mime="application/zip"
