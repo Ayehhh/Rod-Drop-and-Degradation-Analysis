@@ -6,6 +6,7 @@ import numpy as np
 from scipy import stats
 from scipy.optimize import brentq, curve_fit
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import streamlit as st
 
@@ -260,11 +261,8 @@ for label, raw_alarm, (e, c, l), target_c in targets_info:
 st.table(pd.DataFrame(prognosis_data))
 
 # ==========================================
-# 6. VISUALIZATION
+# 6. VISUALIZATION & DATA PREPARATION
 # ==========================================
-fig, ax = plt.subplots(figsize=(10, 5), dpi=150)
-ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=25, alpha=0.8, label="Measured Observations")
-
 candidate_days = [d for d in [f_L[1], f_LL[1], f_Min[1]] if d is not None]
 x_max_plot = max(candidate_days) * 1.15 if candidate_days else days[-1] * 2
 x_plot = np.linspace(0, x_max_plot, 500)
@@ -275,6 +273,68 @@ dates_plot = [t0 + timedelta(days=d) for d in x_plot]
 t_val = stats.t.ppf((1 + CONFIDENCE_PCT / 100.0) / 2, best["dof"]) if best["dof"] >= 1 else 0.0
 band_mm = (t_val * best["resid_std"]) / 1000.0
 
+# --- 6A. STREAMLIT INTERACTIVE GRAPH (PLOTLY) ---
+fig_interactive = go.Figure()
+
+# Confidence Interval (Upper & Lower Bands)
+fig_interactive.add_trace(go.Scatter(
+    x=dates_plot + dates_plot[::-1],
+    y=list(y_clear_plot + band_mm) + list(y_clear_plot - band_mm)[::-1],
+    fill='todense',
+    fillcolor='rgba(214, 39, 40, 0.15)',
+    line=dict(color='rgba(255,255,255,0)'),
+    hoverinfo="skip",
+    showlegend=True,
+    name=f"{CONFIDENCE_PCT:.0f}% Confidence Interval"
+))
+
+# Best Fit Model Line
+fig_interactive.add_trace(go.Scatter(
+    x=dates_plot,
+    y=y_clear_plot,
+    mode='lines',
+    line=dict(color='#d62728', width=2),
+    name=f"Best Fit ({best_name})"
+))
+
+# Observed Data Points
+fig_interactive.add_trace(go.Scatter(
+    x=df["timestamp"],
+    y=df["clearance_mm"],
+    mode='markers',
+    marker=dict(color='#1f77b4', size=6, opacity=0.8),
+    name="Measured Observations"
+))
+
+# Threshold Reference Lines
+fig_interactive.add_hline(
+    y=CLEARANCE_AT_L, line_dash="dash", line_color="#ff7f0e", line_width=1.5,
+    annotation_text=f"L Alarm ({CLEARANCE_AT_L:.3f} mm)", annotation_position="bottom right"
+)
+fig_interactive.add_hline(
+    y=CLEARANCE_AT_LL, line_dash="dash", line_color="#d62728", line_width=1.5,
+    annotation_text=f"LL Alarm ({CLEARANCE_AT_LL:.3f} mm)", annotation_position="bottom right"
+)
+fig_interactive.add_hline(
+    y=MIN_CLEARANCE, line_dash="dot", line_color="black", line_width=1.5,
+    annotation_text=f"Min Clearance ({MIN_CLEARANCE:.3f} mm)", annotation_position="bottom right"
+)
+
+fig_interactive.update_layout(
+    title=dict(text="<b>Piston Rod Clearance Prognostic Trend</b>", x=0.5),
+    xaxis_title="Date",
+    yaxis_title="Clearance (mm)",
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+    margin=dict(l=40, r=40, t=50, b=50),
+    template="plotly_white"
+)
+
+st.plotly_chart(fig_interactive, use_container_width=True)
+
+# --- 6B. STATIC GRAPH FOR PDF REPORT (MATPLOTLIB) ---
+fig_static, ax = plt.subplots(figsize=(10, 5), dpi=150)
+ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=25, alpha=0.8, label="Measured Observations")
 ax.plot(dates_plot, y_clear_plot, color="#d62728", linewidth=2, label=f"Best Fit ({best_name})")
 ax.fill_between(dates_plot, y_clear_plot - band_mm, y_clear_plot + band_mm, color="#d62728", alpha=0.15, label=f"{CONFIDENCE_PCT:.0f}% CI")
 
@@ -287,12 +347,12 @@ ax.set_xlabel("Date")
 ax.set_title("Piston Rod Clearance Prognostic Trend", fontweight="bold")
 ax.legend(loc="lower left", fontsize=8)
 ax.grid(True, linestyle=":", alpha=0.6)
-fig.autofmt_xdate()
-fig.tight_layout()
+fig_static.autofmt_xdate()
+fig_static.tight_layout()
 
 plot_img_path = os.path.join(OUTPUT_DIR, "clearance_trend_plot_en.png")
-fig.savefig(plot_img_path, dpi=150, bbox_inches="tight")
-st.pyplot(fig)
+fig_static.savefig(plot_img_path, dpi=150, bbox_inches="tight")
+plt.close(fig_static)
 
 # ==========================================
 # 7. REPORT GENERATION
