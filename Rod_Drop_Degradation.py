@@ -21,8 +21,8 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("⚙️ Reciprocating Compressor Rod Drop Prognostic Analysis")
-st.markdown("Model wear degradation and project alarm breach dates for piston rod drop.")
+st.title("⚙️ Reciprocating Compressor Rod Drop Degradation and Prognostic Analysis")
+st.markdown("This tool models the physical wear rate of compressor rider rings (Degradation Analysis) and uses predictive models to project the exact date when rod drop will exceed safety thresholds (Prognostic Analysis).")
 
 # ==========================================
 # 1. DATA SOURCE & PARAMETERS CONFIGURATION
@@ -53,20 +53,13 @@ if data_source == "User Specified":
         st.stop()
 
 else:  # Sample Data Mode
-    st.sidebar.success("✅ Running in Sample Data Mode")
+    st.sidebar.success("✅ Running with Synthetic Historical Data")
     
-    # Preset sample parameters
-    NEW_CLEARANCE = 2.000
-    BN_L_THRESHOLD = -1500.0
-    BN_LL_THRESHOLD = -2000.0
-    MIN_CLEARANCE = 0.500
-    
-    st.sidebar.subheader("Sample Threshold Values")
-    st.sidebar.text(f"• As-New Clearance: {NEW_CLEARANCE:.3f} mm")
-    st.sidebar.text(f"• L Alarm: {BN_L_THRESHOLD:.1f} µm")
-    st.sidebar.text(f"• LL Alarm: {BN_LL_THRESHOLD:.1f} µm")
-    st.sidebar.text(f"• OEM Min Clearance: {MIN_CLEARANCE:.3f} mm")
-    
+    st.sidebar.subheader("Adjust Thresholds (Editable)")
+    NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
+    BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
+    BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
+    MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.500, step=0.001, format="%.3f")
     CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
 
     # Generate realistic historical sample data automatically
@@ -152,8 +145,20 @@ best_name = max(model_results, key=lambda k: model_results[k]["r2"])
 best = model_results[best_name]
 
 # ==========================================
-# 4. PROGNOSTIC BREACH CALCULATION
+# 4. PROGNOSTIC BREACH CALCULATION & MODEL EVALUATION
 # ==========================================
+# Display Comparison Table for All Evaluated Models
+st.subheader("📊 Model Comparison & Fit Metrics")
+model_comparison_data = []
+for name, res in model_results.items():
+    model_comparison_data.append({
+        "Model Name": name,
+        "R² Score": f"{res['r2']:.4f}",
+        "Residual Std (µm)": f"{res['resid_std']:.2f}",
+        "Status": "✅ Selected (Best Fit)" if name == best_name else "Candidate"
+    })
+st.dataframe(pd.DataFrame(model_comparison_data), use_container_width=True)
+
 def solve_crossing(model, target_wear, conf_pct, max_days=3650):
     func, popt, dof, std = model["func"], model["popt"], model["dof"], model["resid_std"]
     t_val = stats.t.ppf((1 + conf_pct / 100.0) / 2, dof) if dof >= 1 else 0.0
@@ -184,18 +189,25 @@ m2.metric("Latest Wear", f"{latest_wear_um:.1f} µm")
 m3.metric("Current Clearance", f"{latest_clearance_mm:.3f} mm")
 m4.metric("Confidence Level", f"{CONFIDENCE_PCT:.1f}%")
 
-st.subheader("📋 Prognostic Breach Projection Summary")
+st.subheader("📋 Prognostic Breach & RUL Projection Summary")
 prognosis_data = []
+latest_day = days[-1]
+
 for label, (e, c, l), target_c in [("L Alarm", f_L, CLEARANCE_AT_L), ("LL Alarm", f_LL, CLEARANCE_AT_LL), ("OEM Min Limit", f_Min, MIN_CLEARANCE)]:
     c_date = (t0 + timedelta(days=c)).strftime('%Y-%m-%d') if c else "N/A"
     e_date = (t0 + timedelta(days=e)).strftime('%Y-%m-%d') if e else "N/A"
     l_date = (t0 + timedelta(days=l)).strftime('%Y-%m-%d') if l else "N/A"
+    
+    # RUL calculation in days from the latest data point
+    rul_days = f"{int(c - latest_day)} Days" if c and c >= latest_day else "Exceeded / N/A"
+    
     prognosis_data.append({
         "Threshold Level": label,
         "Target Clearance (mm)": f"{target_c:.3f}",
-        "Earliest Predicted Date": e_date,
-        "Expected Predicted Date": c_date,
-        "Latest Predicted Date": l_date
+        "Earliest Date": e_date,
+        "Expected Date": c_date,
+        "Latest Date": l_date,
+        "RUL (Days)": rul_days
     })
 st.table(pd.DataFrame(prognosis_data))
 
