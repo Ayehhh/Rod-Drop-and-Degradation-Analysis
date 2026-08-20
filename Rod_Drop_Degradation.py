@@ -22,30 +22,71 @@ st.set_page_config(
 )
 
 st.title("⚙️ Reciprocating Compressor Rod Drop Prognostic Analysis")
-st.markdown("Upload historical rod drop data to model wear degradation and project alarm breach dates.")
+st.markdown("Model wear degradation and project alarm breach dates for piston rod drop.")
 
 # ==========================================
-# 1. USER INTERACTIVE INPUT CONFIGURATION
+# 1. DATA SOURCE & PARAMETERS CONFIGURATION
 # ==========================================
-st.sidebar.header("1. Upload Data")
-uploaded_file = st.sidebar.file_uploader("Upload Excel Dataset (.xlsx / .xls)", type=["xlsx", "xls"])
+st.sidebar.header("1. Data Source")
+data_source = st.sidebar.selectbox(
+    "Choose Analysis Mode:",
+    ["User Specified", "Sample Data"]
+)
 
-st.sidebar.header("2. Engineering Parameters")
-NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
-BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-250.0, step=10.0, format="%.1f")
-BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-500.0, step=10.0, format="%.1f")
-MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=1.000, step=0.001, format="%.3f")
-CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
+df = None
 
-if uploaded_file is None:
-    st.info("👈 Please upload an Excel dataset in the sidebar to begin analysis.")
-    st.stop()
+if data_source == "User Specified":
+    st.sidebar.subheader("Upload Dataset")
+    uploaded_file = st.sidebar.file_uploader("Upload Excel Dataset (.xlsx / .xls)", type=["xlsx", "xls"])
+    
+    st.sidebar.subheader("Engineering Parameters")
+    NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
+    BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
+    BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
+    MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.500, step=0.001, format="%.3f")
+    CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
 
-# Output Directory Setup
+    if uploaded_file is not None:
+        df = pd.read_excel(uploaded_file)
+    else:
+        st.info("👈 Please upload an Excel dataset in the sidebar to begin analysis.")
+        st.stop()
+
+else:  # Sample Data Mode
+    st.sidebar.success("✅ Running in Sample Data Mode")
+    
+    # Preset sample parameters
+    NEW_CLEARANCE = 2.000
+    BN_L_THRESHOLD = -1500.0
+    BN_LL_THRESHOLD = -2000.0
+    MIN_CLEARANCE = 0.500
+    
+    st.sidebar.subheader("Sample Threshold Values")
+    st.sidebar.text(f"• As-New Clearance: {NEW_CLEARANCE:.3f} mm")
+    st.sidebar.text(f"• L Alarm: {BN_L_THRESHOLD:.1f} µm")
+    st.sidebar.text(f"• LL Alarm: {BN_LL_THRESHOLD:.1f} µm")
+    st.sidebar.text(f"• OEM Min Clearance: {MIN_CLEARANCE:.3f} mm")
+    
+    CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
+
+    # Generate realistic historical sample data automatically
+    np.random.seed(42)
+    dates = pd.date_range(end=datetime.now(), periods=18, freq='30D')
+    # Wear progression from 0 to -1100 um with slight measurement noise
+    days_passed = np.arange(18) * 30
+    synthetic_wear = 0.05 * (days_passed ** 1.3) + np.random.normal(0, 15, 18)
+    raw_readings = -np.abs(synthetic_wear)
+    
+    df = pd.DataFrame({
+        "timestamp": dates,
+        "raw_um": raw_readings
+    })
+
+# Setup Output Directory
 OUTPUT_DIR = "Prognosis_Output_Files"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Calculate Targets
+# Calculate Target Clearances and Wear Limits
 CLEARANCE_AT_L = NEW_CLEARANCE - (abs(BN_L_THRESHOLD) / 1000.0)
 CLEARANCE_AT_LL = NEW_CLEARANCE - (abs(BN_LL_THRESHOLD) / 1000.0)
 WEAR_TARGET_L = abs(BN_L_THRESHOLD)
@@ -53,10 +94,8 @@ WEAR_TARGET_LL = abs(BN_LL_THRESHOLD)
 WEAR_TARGET_MIN = (NEW_CLEARANCE - MIN_CLEARANCE) * 1000.0
 
 # ==========================================
-# 2. DATA IMPORT AND PREPROCESSING
+# 2. DATA PREPROCESSING
 # ==========================================
-df = pd.read_excel(uploaded_file)
-
 if len(df.columns) >= 2:
     df = df.iloc[:, :2]
     df.columns = ["timestamp", "raw_um"]
@@ -76,7 +115,7 @@ latest_wear_um = df["wear_um"].iloc[-1]
 latest_clearance_mm = df["clearance_mm"].iloc[-1]
 
 # ==========================================
-# 3. REGRESSION MODELING & COMPARISON
+# 3. REGRESSION MODELING
 # ==========================================
 def _lin(x, a, b): return a * x + b
 def _quad(x, a, b, c): return a * x**2 + b * x + c
@@ -298,12 +337,10 @@ ws1.add_image(img_trend, "B14")
 img_schematic = Image(schematic_img_path)
 ws1.add_image(img_schematic, "I14")
 
-# Save workbook to memory buffer for Streamlit Download
 excel_buffer = io.BytesIO()
 wb.save(excel_buffer)
 excel_buffer.seek(0)
 
-# Zip output directory for full report download
 zip_path = f"{OUTPUT_DIR}.zip"
 shutil.make_archive(OUTPUT_DIR, 'zip', OUTPUT_DIR)
 with open(zip_path, "rb") as f:
