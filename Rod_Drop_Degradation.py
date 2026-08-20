@@ -12,7 +12,7 @@ import streamlit as st
 # ReportLab imports for PDF generation
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # Set Streamlit Page Config
@@ -23,7 +23,7 @@ st.set_page_config(
 )
 
 st.title("⚙️ Reciprocating Compressor Rod Drop Degradation and Prognostic Analysis")
-st.markdown("This tool models the physical wear rate of compressor rider rings (Degradation Analysis) and uses predictive models to project the exact date when rod drop will exceed safety thresholds (Prognostic Analysis).")
+st.markdown("This tool models the physical wear rate of compressor rider rings (Degradation Analysis) and uses predictive mathematical models to project the exact date when rod drop will exceed safety thresholds (Prognostic Analysis).")
 
 # ==========================================
 # 1. DATA SOURCE & PARAMETERS CONFIGURATION
@@ -74,7 +74,7 @@ else:  # Sample Data Mode
         "raw_um": raw_readings
     })
 
-# Setup Output Directory (Clean directory to keep ZIP lightweight)
+# Setup Output Directory
 OUTPUT_DIR = "Prognosis_Output_Files"
 if os.path.exists(OUTPUT_DIR):
     shutil.rmtree(OUTPUT_DIR)
@@ -108,28 +108,51 @@ latest_wear_um = df["wear_um"].iloc[-1]
 latest_clearance_mm = df["clearance_mm"].iloc[-1]
 
 # ==========================================
-# 3. REGRESSION MODELING (INCL. LOG-NORMAL)
+# 3. EXPANDED REGRESSION MODELING SUITE
 # ==========================================
-def _lin(x, a, b): return a * x + b
-def _quad(x, a, b, c): return a * x**2 + b * x + c
-def _power(x, a, b): return a * np.power(np.maximum(x, 1e-6), b)
-def _expo(x, a, b): return a * np.exp(np.clip(b * x, -100, 100))
-def _logf(x, a, b): return a * np.log(x + 1.0) + b
-def _lognorm(x, a, shape, scale): return a * stats.lognorm.cdf(np.maximum(x, 1e-6), s=shape, scale=scale)
+def _lin(x, a, b): 
+    return a * x + b
+
+def _quad(x, a, b, c): 
+    return a * x**2 + b * x + c
+
+def _power(x, a, b): 
+    return a * np.power(np.maximum(x, 1e-6), b)
+
+def _expo(x, a, b): 
+    return a * np.exp(np.clip(b * x, -100, 100))
+
+def _logf(x, a, b): 
+    return a * np.log(x + 1.0) + b
+
+def _lognorm(x, a, shape, scale): 
+    return a * stats.lognorm.cdf(np.maximum(x, 1e-6), s=shape, scale=scale)
+
+def _weibull(x, a, beta, eta): 
+    return a * (1.0 - np.exp(-1.0 * (np.maximum(x, 1e-6) / eta)**beta))
+
+def _loglogis(x, a, alpha, beta):
+    xs = np.maximum(x, 1e-6)
+    return a * (1.0 / (1.0 + (xs / alpha)**(-beta)))
+
+max_w = max(np.max(wear_um) * 2.5, 3000.0)
+mean_d = max(np.mean(days), 1.0)
 
 MODELS = {
-    "Linear": (_lin, [1.0, 0.0]),
-    "Quadratic": (_quad, [0.01, 1.0, 0.0]),
-    "Power": (_power, [1.0, 1.0]),
-    "Exponential": (_expo, [1.0, 0.01]),
-    "Logarithmic": (_logf, [1.0, 0.0]),
-    "Log-Normal": (_lognorm, [np.max(wear_um) * 1.5, 0.8, np.mean(days) + 1.0])
+    "Linear": (_lin, [1.0, 0.0], (-np.inf, np.inf)),
+    "Quadratic": (_quad, [0.0001, 0.1, 0.0], (-np.inf, np.inf)),
+    "Power Law": (_power, [0.1, 1.2], (0, np.inf)),
+    "Exponential": (_expo, [10.0, 0.001], (-np.inf, np.inf)),
+    "Logarithmic": (_logf, [100.0, 0.0], (-np.inf, np.inf)),
+    "Log-Normal CDF": (_lognorm, [max_w, 1.0, mean_d], ([0, 0.01, 0.1], [max_w * 5, 10.0, 50000])),
+    "Weibull CDF": (_weibull, [max_w, 1.5, mean_d], ([0, 0.1, 0.1], [max_w * 5, 10.0, 50000])),
+    "Log-Logistic CDF": (_loglogis, [max_w, mean_d, 1.5], ([0, 0.1, 0.1], [max_w * 5, 50000, 10.0]))
 }
 
 model_results = {}
-for name, (func, p0) in MODELS.items():
+for name, (func, p0, bnds) in MODELS.items():
     try:
-        popt, _ = curve_fit(func, days, wear_um, p0=p0, maxfev=10000)
+        popt, _ = curve_fit(func, days, wear_um, p0=p0, bounds=bnds, maxfev=30000)
         y_pred = func(days, *popt)
         ss_res = np.sum((wear_um - y_pred)**2)
         ss_tot = np.sum((wear_um - np.mean(wear_um))**2)
@@ -147,9 +170,20 @@ best_name = max(model_results, key=lambda k: model_results[k]["r2"])
 best = model_results[best_name]
 
 # ==========================================
-# 4. PROGNOSTIC BREACH CALCULATION
+# 4. EXPLANATION & FIT METRICS DISPLAY
 # ==========================================
 st.subheader("📊 Model Comparison & Fit Metrics")
+
+with st.expander("💡 Technical Guidance: Understanding Model Selection & Metrics"):
+    st.markdown("""
+    * **Residual Standard Deviation (Residual Std in µm):** Measures the physical noise or distance between actual rod drop readings and fitted model predictions. Lower values signify higher accuracy.
+    * **$R^2$ Score (Coefficient of Determination):** Quantifies how well the variance in degradation is captured by the time variable ($1.0$ is perfect fit).
+    * **Model Selection Recommendation:** 
+        * **Power Law / Linear / Quadratic:** Recommended for steady mechanical wear scenarios where friction steadily increases over operational hours.
+        * **Exponential:** Best suited for severe wear acceleration prior to total material fatigue.
+        * **CDF Models (Log-Normal, Weibull, Log-Logistic):** Useful when rider ring wear decelerates after initial bedding-in.
+    """)
+
 model_comparison_data = []
 for name, res in model_results.items():
     model_comparison_data.append({
@@ -160,6 +194,9 @@ for name, res in model_results.items():
     })
 st.dataframe(pd.DataFrame(model_comparison_data), use_container_width=True)
 
+# ==========================================
+# 5. PROGNOSTIC BREACH CALCULATION
+# ==========================================
 def solve_crossing(model, target_wear, conf_pct, max_days=3650):
     func, popt, dof, std = model["func"], model["popt"], model["dof"], model["resid_std"]
     t_val = stats.t.ppf((1 + conf_pct / 100.0) / 2, dof) if dof >= 1 else 0.0
@@ -218,7 +255,7 @@ for label, raw_alarm, (e, c, l), target_c in targets_info:
 st.table(pd.DataFrame(prognosis_data))
 
 # ==========================================
-# 5. GENERATE VISUALIZATION (TREND ONLY)
+# 6. VISUALIZATION
 # ==========================================
 st.subheader("📈 Prognostic Trend Plot")
 
@@ -255,7 +292,7 @@ fig.savefig(plot_img_path, dpi=150, bbox_inches="tight")
 st.pyplot(fig)
 
 # ==========================================
-# 6. PDF REPORT GENERATION & ZIP PACKAGING
+# 7. REPORT GENERATION
 # ==========================================
 pdf_file_path = os.path.join(OUTPUT_DIR, f"Piston_Rod_Clearance_Prognostic_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
 
@@ -267,66 +304,109 @@ def generate_pdf_report(filename):
     title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=13, textColor=colors.HexColor('#1B365D'), alignment=1, spaceAfter=12)
     section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor('#FFFFFF'), backColor=colors.HexColor('#4A777A'), spaceBefore=10, spaceAfter=6, leftIndent=4)
 
-    story.append(Paragraph("DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR ROD DROP AND ESTIMATED CLEARANCE", title_style))
-    story.append(Spacer(1, 8))
+    hdr_style = ParagraphStyle('TH', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=1)
+    hdr_style_l = ParagraphStyle('THL', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=0)
+    body_style = ParagraphStyle('TD', fontName='Helvetica', fontSize=8, leading=10, alignment=1)
+    body_style_l = ParagraphStyle('TDL', fontName='Helvetica', fontSize=8, leading=10, alignment=0)
 
+    story.append(Paragraph("DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR ROD DROP AND ESTIMATED CLEARANCE", title_style))
+    story.append(Spacer(1, 6))
+
+    # SECTION 1: TECHNICAL SPECIFICATIONS
     story.append(Paragraph("TECHNICAL SPECIFICATIONS & THRESHOLDS", section_style))
     spec_data = [
-        ["Parameter", "Value", "Unit"],
-        ["As-Left Bottom Piston-to-Liner Clearance", f"{NEW_CLEARANCE:.3f}", "mm"],
-        ["Bently Nevada L Alarm Threshold", f"{BN_L_THRESHOLD:.1f}", "um"],
-        ["Bently Nevada LL Alarm Threshold", f"{BN_LL_THRESHOLD:.1f}", "um"],
-        ["Minimum Allowable Clearance (OEM)", f"{MIN_CLEARANCE:.3f}", "mm"],
-        ["Calculated L Clearance Limit", f"{CLEARANCE_AT_L:.3f}", "mm"],
-        ["Calculated LL Clearance Limit", f"{CLEARANCE_AT_LL:.3f}", "mm"],
-        ["Statistical Confidence Level", f"{CONFIDENCE_PCT:.1f}", "%"]
+        [Paragraph("Parameter", hdr_style_l), Paragraph("Value", hdr_style), Paragraph("Unit", hdr_style)],
+        [Paragraph("As-Left Bottom Piston-to-Liner Clearance", body_style_l), Paragraph(f"{NEW_CLEARANCE:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Bently Nevada L Alarm Threshold", body_style_l), Paragraph(f"{BN_L_THRESHOLD:.1f}", body_style), Paragraph("um", body_style)],
+        [Paragraph("Bently Nevada LL Alarm Threshold", body_style_l), Paragraph(f"{BN_LL_THRESHOLD:.1f}", body_style), Paragraph("um", body_style)],
+        [Paragraph("Minimum Allowable Clearance (OEM)", body_style_l), Paragraph(f"{MIN_CLEARANCE:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Calculated L Clearance Limit", body_style_l), Paragraph(f"{CLEARANCE_AT_L:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Calculated LL Clearance Limit", body_style_l), Paragraph(f"{CLEARANCE_AT_LL:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Statistical Confidence Level", body_style_l), Paragraph(f"{CONFIDENCE_PCT:.1f}", body_style), Paragraph("%", body_style)]
     ]
     t_spec = Table(spec_data, colWidths=[270, 130, 100])
     t_spec.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
     ]))
     story.append(t_spec)
-    story.append(Spacer(1, 10))
+    story.append(Spacer(1, 8))
 
+    # SECTION 2: MODEL COMPARISON
+    story.append(Paragraph("MODEL COMPARISON & FIT METRICS", section_style))
+    comp_headers = [
+        Paragraph("Model Name", hdr_style_l), 
+        Paragraph("R² Score", hdr_style), 
+        Paragraph("Residual Std (um)", hdr_style), 
+        Paragraph("Status", hdr_style)
+    ]
+    comp_table_data = [comp_headers]
+    for row in model_comparison_data:
+        comp_table_data.append([
+            Paragraph(row["Model Name"], body_style_l),
+            Paragraph(row["R² Score"], body_style),
+            Paragraph(row["Residual Std (µm)"], body_style),
+            Paragraph(row["Status"], body_style)
+        ])
+
+    t_comp = Table(comp_table_data, colWidths=[130, 100, 120, 150])
+    t_comp.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    story.append(t_comp)
+    story.append(Spacer(1, 8))
+
+    # SECTION 3: PROGNOSTIC BREACH
     story.append(Paragraph("PROGNOSTIC BREACH PROJECTION SUMMARY", section_style))
-    prog_headers = ["Threshold Level", "Alarm Threshold (um)", "Target Clearance (mm)", "Earliest Date", "Expected Date", "Latest Date"]
+    prog_headers = [
+        Paragraph("Threshold Level", hdr_style_l), 
+        Paragraph("Alarm Threshold (um)", hdr_style), 
+        Paragraph("Target Clearance (mm)", hdr_style), 
+        Paragraph("Earliest Date", hdr_style), 
+        Paragraph("Expected Date", hdr_style), 
+        Paragraph("Latest Date", hdr_style)
+    ]
     prog_table_data = [prog_headers]
     
     for row in prognosis_data:
         prog_table_data.append([
-            row["Threshold Level"], 
-            row["Alarm Threshold (um)"], 
-            row["Target Clearance (mm)"], 
-            row["Earliest Date"], 
-            row["Expected Date"], 
-            row["Latest Date"]
+            Paragraph(row["Threshold Level"], body_style_l), 
+            Paragraph(row["Alarm Threshold (um)"], body_style), 
+            Paragraph(row["Target Clearance (mm)"], body_style), 
+            Paragraph(row["Earliest Date"], body_style), 
+            Paragraph(row["Expected Date"], body_style), 
+            Paragraph(row["Latest Date"], body_style)
         ])
 
-    t_prog = Table(prog_table_data, colWidths=[100, 85, 85, 75, 75, 80])
+    t_prog = Table(prog_table_data, colWidths=[90, 85, 85, 80, 80, 80])
     t_prog.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 8.5),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
     ]))
     story.append(t_prog)
-    story.append(Spacer(1, 10))
 
+    story.append(PageBreak())
+
+    # SECTION 4 (PAGE 2): VISUALIZATION
     story.append(Paragraph("PROGNOSTIC TREND VISUALISATION", section_style))
-    story.append(Spacer(1, 4))
-    story.append(RLImage(plot_img_path, width=500, height=230))
+    story.append(Spacer(1, 10))
+    story.append(RLImage(plot_img_path, width=500, height=250))
 
     doc.build(story)
 
 generate_pdf_report(pdf_file_path)
 
-# Archive PDF and Image into ZIP
+# Archive ZIP Package
 zip_base_name = os.path.join(os.getcwd(), "Prognosis_Output_Files_Package")
 zip_archive_path = shutil.make_archive(zip_base_name, 'zip', OUTPUT_DIR)
 
@@ -336,7 +416,7 @@ with open(pdf_file_path, "rb") as f:
 with open(zip_archive_path, "rb") as f:
     zip_bytes = f.read()
 
-# Download Buttons Section
+# Download Section
 st.subheader("📥 Download Prognosis Reports")
 dcol1, dcol2 = st.columns(2)
 dcol1.download_button(
