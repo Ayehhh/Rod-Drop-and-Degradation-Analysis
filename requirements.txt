@@ -3,6 +3,6 @@ pandas
 numpy
 scipy
 matplotlib
-openpyxl
 reportlab
-plotly.graph_objects
+openpyxl
+plotly
