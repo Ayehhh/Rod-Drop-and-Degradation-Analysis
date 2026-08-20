@@ -1,7 +1,7 @@
 streamlit
-openpyxl
 pandas
 numpy
-requests
-matplotlib
 scipy
+matplotlib
+openpyxl
+reportlab
