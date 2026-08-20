@@ -5,4 +5,4 @@ scipy
 matplotlib
 openpyxl
 reportlab
-plotly
+plotly.graph_objects
