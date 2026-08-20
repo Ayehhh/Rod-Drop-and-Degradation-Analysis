@@ -65,7 +65,6 @@ else:  # Sample Data Mode
     # Generate realistic historical sample data automatically
     np.random.seed(42)
     dates = pd.date_range(end=datetime.now(), periods=18, freq='30D')
-    # Wear progression from 0 to -1100 um with slight measurement noise
     days_passed = np.arange(18) * 30
     synthetic_wear = 0.05 * (days_passed ** 1.3) + np.random.normal(0, 15, 18)
     raw_readings = -np.abs(synthetic_wear)
@@ -147,7 +146,6 @@ best = model_results[best_name]
 # ==========================================
 # 4. PROGNOSTIC BREACH CALCULATION & MODEL EVALUATION
 # ==========================================
-# Display Comparison Table for All Evaluated Models
 st.subheader("📊 Model Comparison & Fit Metrics")
 model_comparison_data = []
 for name, res in model_results.items():
@@ -197,8 +195,6 @@ for label, (e, c, l), target_c in [("L Alarm", f_L, CLEARANCE_AT_L), ("LL Alarm"
     c_date = (t0 + timedelta(days=c)).strftime('%Y-%m-%d') if c else "N/A"
     e_date = (t0 + timedelta(days=e)).strftime('%Y-%m-%d') if e else "N/A"
     l_date = (t0 + timedelta(days=l)).strftime('%Y-%m-%d') if l else "N/A"
-    
-    # RUL calculation in days from the latest data point
     rul_days = f"{int(c - latest_day)} Days" if c and c >= latest_day else "Exceeded / N/A"
     
     prognosis_data.append({
@@ -306,6 +302,8 @@ col2.pyplot(fig_schematic)
 # 6. EXCEL REPORT GENERATION & DOWNLOAD
 # ==========================================
 wb = openpyxl.Workbook()
+
+# Sheet 1: Executive Summary & Prognosis
 ws1 = wb.active
 ws1.title = "Summary & Prognosis"
 ws1.views.sheetView[0].showGridLines = True
@@ -318,13 +316,20 @@ BOLD_FONT = Font(name="Calibri", size=11, bold=True)
 REGULAR_FONT = Font(name="Calibri", size=11)
 
 ws1.merge_cells("B2:G2")
-ws1["B2"] = "DEGRADATION AND PROGNOSTIC ANALYSIS REPORT"
+ws1["B2"] = "DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR PISTON ROD DROP AND ESTIMATED CLEARANCE"
 ws1["B2"].font = TITLE_FONT
 ws1["B2"].fill = NAVY_FILL
 ws1["B2"].alignment = Alignment(horizontal="center", vertical="center")
+ws1.row_dimensions[2].height = 40
+
+ws1.merge_cells("B4:D4")
+ws1["B4"] = "TECHNICAL SPECIFICATIONS & THRESHOLDS"
+ws1["B4"].font = HEADER_FONT
+ws1["B4"].fill = STEEL_FILL
+ws1["B4"].alignment = Alignment(horizontal="center", vertical="center")
 
 params = [
-    ("As-Left Bottom Clearance", NEW_CLEARANCE, "mm"),
+    ("As-Left Bottom Piston-to-Liner Clearance", NEW_CLEARANCE, "mm"),
     ("Bently Nevada L Alarm Threshold", BN_L_THRESHOLD, "um"),
     ("Bently Nevada LL Alarm Threshold", BN_LL_THRESHOLD, "um"),
     ("Minimum Allowable Clearance (OEM)", MIN_CLEARANCE, "mm"),
@@ -343,12 +348,102 @@ for idx, (param, val, unit) in enumerate(params, start=5):
     elif unit == "%": cell.number_format = "0.0%"
     ws1.cell(row=idx, column=4, value=unit).font = REGULAR_FONT
 
+ws1.merge_cells("B13:G13")
+ws1["B13"] = "PROGNOSTIC BREACH PROJECTION SUMMARY"
+ws1["B13"].font = HEADER_FONT
+ws1["B13"].fill = STEEL_FILL
+ws1["B13"].alignment = Alignment(horizontal="center", vertical="center")
+
+headers = ["Threshold Level", "Alarm Threshold (um)", "Estimated Calculated Clearance (mm)", "Earliest Predicted Date", "Expected Predicted Date", "Latest Predicted Date"]
+for col_num, h in enumerate(headers, start=2):
+    c = ws1.cell(row=14, column=col_num, value=h)
+    c.font = HEADER_FONT
+    c.fill = NAVY_FILL
+    c.alignment = Alignment(horizontal="center", vertical="center")
+
+prognostic_rows = [
+    ("Bently Nevada L Alarm", WEAR_TARGET_L, CLEARANCE_AT_L, f_L),
+    ("Bently Nevada LL Alarm", WEAR_TARGET_LL, CLEARANCE_AT_LL, f_LL),
+    ("Minimum Allowable Clearance (OEM)", WEAR_TARGET_MIN, MIN_CLEARANCE, f_Min)
+]
+
+for row_idx, (level, w_tgt, c_tgt, dates_tuple) in enumerate(prognostic_rows, start=15):
+    e_d, c_d, l_d = dates_tuple
+    ws1.cell(row=row_idx, column=2, value=level).font = BOLD_FONT
+    c_w = ws1.cell(row=row_idx, column=3, value=w_tgt)
+    c_w.number_format = "0.0"
+    c_c = ws1.cell(row=row_idx, column=4, value=c_tgt)
+    c_c.number_format = "0.000"
+
+    for c_i, d_val in enumerate([e_d, c_d, l_d], start=5):
+        cell = ws1.cell(row=row_idx, column=c_i)
+        if d_val is not None:
+            cell.value = t0 + timedelta(days=d_val)
+            cell.number_format = "YYYY-MM-DD"
+        else:
+            cell.value = "N/A"
+        cell.alignment = Alignment(horizontal="center")
+
+# Embed Images side-by-side in Executive Summary
 img_trend = Image(plot_img_path)
-ws1.add_image(img_trend, "B14")
+ws1.add_image(img_trend, "B20")
 
 img_schematic = Image(schematic_img_path)
-ws1.add_image(img_schematic, "I14")
+ws1.add_image(img_schematic, "I20")
 
+for col in ws1.columns:
+    max_len = max(len(str(cell.value or '')) for cell in col)
+    col_letter = get_column_letter(col[0].column)
+    ws1.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+# Sheet 2: Model Evaluation & Historical Data Log
+ws2 = wb.create_sheet(title="Model Evaluation & Data")
+ws2.views.sheetView[0].showGridLines = True
+
+ws2.merge_cells("A1:E1")
+ws2["A1"] = "REGRESSION MODEL EVALUATION & RANKING"
+ws2["A1"].font = HEADER_FONT
+ws2["A1"].fill = NAVY_FILL
+
+m_headers = ["Model Name", "R-Squared (R^2)", "Residual Std Dev (um)", "Degrees of Freedom", "Status"]
+for col_num, h in enumerate(m_headers, start=1):
+    c = ws2.cell(row=2, column=col_num, value=h)
+    c.font = HEADER_FONT
+    c.fill = STEEL_FILL
+
+for r_idx, (m_name, m_info) in enumerate(model_results.items(), start=3):
+    ws2.cell(row=r_idx, column=1, value=m_name).font = BOLD_FONT
+    r2_c = ws2.cell(row=r_idx, column=2, value=m_info["r2"])
+    r2_c.number_format = "0.0000"
+    std_c = ws2.cell(row=r_idx, column=3, value=m_info["resid_std"])
+    std_c.number_format = "0.0"
+    ws2.cell(row=r_idx, column=4, value=m_info["dof"])
+    status_c = ws2.cell(row=r_idx, column=5, value="SELECTED" if m_name == best_name else "Candidate")
+    if m_name == best_name:
+        status_c.font = BOLD_FONT
+
+ws2.cell(row=10, column=1, value="Historical Data Analysis").font = HEADER_FONT
+ws2.cell(row=10, column=1).fill = STEEL_FILL
+
+d_headers = ["Timestamp", "Raw Probe Reading (um)", "Calculated Wear (um)", "Clearance (mm)"]
+for c_i, h in enumerate(d_headers, start=1):
+    c = ws2.cell(row=11, column=c_i, value=h)
+    c.font = HEADER_FONT
+    c.fill = NAVY_FILL
+
+for idx, row in df.iterrows():
+    r = idx + 12
+    ws2.cell(row=r, column=1, value=row["timestamp"]).number_format = "YYYY-MM-DD"
+    ws2.cell(row=r, column=2, value=row["raw_um"]).number_format = "0.0"
+    ws2.cell(row=r, column=3, value=row["wear_um"]).number_format = "0.0"
+    ws2.cell(row=r, column=4, value=row["clearance_mm"]).number_format = "0.000"
+
+for col in ws2.columns:
+    max_len = max(len(str(cell.value or '')) for cell in col)
+    col_letter = get_column_letter(col[0].column)
+    ws2.column_dimensions[col_letter].width = max(max_len + 3, 12)
+
+# Save workbook to memory buffer for Streamlit download
 excel_buffer = io.BytesIO()
 wb.save(excel_buffer)
 excel_buffer.seek(0)
@@ -358,10 +453,11 @@ shutil.make_archive(OUTPUT_DIR, 'zip', OUTPUT_DIR)
 with open(zip_path, "rb") as f:
     zip_bytes = f.read()
 
+# Download Buttons Section
 st.subheader("📥 Download Prognosis Reports")
 dcol1, dcol2 = st.columns(2)
 dcol1.download_button(
-    label="📄 Download Excel Summary Report",
+    label="📄 Download Comprehensive Excel Report",
     data=excel_buffer,
     file_name=f"Piston_Rod_Clearance_Prognostic_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
