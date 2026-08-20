@@ -29,24 +29,30 @@ st.markdown("This tool models the physical wear rate of compressor rider rings (
 # ==========================================
 # 1. DATA SOURCE & PARAMETERS CONFIGURATION
 # ==========================================
-st.sidebar.header("1. Data Source")
+st.sidebar.header("1. Data Source & Scenarios")
 data_source = st.sidebar.selectbox(
-    "Choose Analysis Mode:",
-    ["User Specified", "Sample Data"]
+    "Choose Analysis Mode / Scenario:",
+    [
+        "User Specified (Upload File)",
+        "Scenario 1: Normal Operation (OK)",
+        "Scenario 2: Accelerating Wear (Reaching LL Alarm)",
+        "Scenario 3: Severe Degradation (Reaching OEM Min Limit)"
+    ]
 )
 
 df = None
 
-if data_source == "User Specified":
+# Engineering Parameters
+st.sidebar.subheader("Engineering Parameters")
+NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
+BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
+BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
+MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.500, step=0.001, format="%.3f")
+CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
+
+if data_source == "User Specified (Upload File)":
     st.sidebar.subheader("2. Upload Dataset")
     uploaded_file = st.sidebar.file_uploader("Upload Excel Dataset (.xlsx / .xls)", type=["xlsx", "xls"])
-
-    st.sidebar.subheader("3. Engineering Parameters")
-    NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
-    BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
-    BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
-    MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.500, step=0.001, format="%.3f")
-    CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
 
     if uploaded_file is not None:
         df = pd.read_excel(uploaded_file)
@@ -54,22 +60,28 @@ if data_source == "User Specified":
         st.info("👈 Please upload an Excel dataset in the sidebar to begin analysis.")
         st.stop()
 
-else:  # Sample Data Mode
-    st.sidebar.success("✅ Running with Synthetic Historical Data")
-
-    st.sidebar.subheader("Adjust Thresholds (Editable)")
-    NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
-    BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
-    BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
-    MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.500, step=0.001, format="%.3f")
-    CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
-
+else:
     np.random.seed(42)
-    dates = pd.date_range(end=datetime.now(), periods=18, freq='30D')
-    days_passed = np.arange(18) * 30
-    synthetic_wear = 0.05 * (days_passed ** 1.3) + np.random.normal(0, 15, 18)
-    raw_readings = -np.abs(synthetic_wear)
+    
+    if data_source == "Scenario 1: Normal Operation (OK)":
+        st.sidebar.success("✅ Scenario Loaded: Normal Wear Rate")
+        dates = pd.date_range(end=datetime.now(), periods=18, freq='30D')
+        days_passed = np.arange(18) * 30
+        synthetic_wear = 0.05 * (days_passed ** 1.3) + np.random.normal(0, 15, 18)
 
+    elif data_source == "Scenario 2: Accelerating Wear (Reaching LL Alarm)":
+        st.sidebar.warning("⚠️ Scenario Loaded: High Wear (Breached L & Approaching LL Alarm)")
+        dates = pd.date_range(end=datetime.now(), periods=24, freq='30D')
+        days_passed = np.arange(24) * 30
+        synthetic_wear = 0.35 * (days_passed ** 1.32) + np.random.normal(0, 20, 24)
+
+    elif data_source == "Scenario 3: Severe Degradation (Reaching OEM Min Limit)":
+        st.sidebar.error("🚨 Scenario Loaded: Critical Degradation (Approaching OEM Min Limit)")
+        dates = pd.date_range(end=datetime.now(), periods=28, freq='30D')
+        days_passed = np.arange(28) * 30
+        synthetic_wear = 0.0028 * (days_passed ** 2.05) + np.random.normal(0, 25, 28)
+
+    raw_readings = -np.abs(synthetic_wear)
     df = pd.DataFrame({
         "timestamp": dates,
         "raw_um": raw_readings
