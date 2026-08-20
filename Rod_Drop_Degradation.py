@@ -58,7 +58,7 @@ else:  # Sample Data Mode
     st.sidebar.success("✅ Running with Synthetic Historical Data")
 
     st.sidebar.subheader("Adjust Thresholds (Editable)")
-    NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.000, step=0.001, format="%.3f")
+    NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.500, step=0.001, format="%.3f")
     BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
     BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
     MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.500, step=0.001, format="%.3f")
