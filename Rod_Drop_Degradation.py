@@ -32,12 +32,12 @@ st.markdown("This tool models the physical wear rate of compressor rider rings (
 st.sidebar.header("1. Data Source")
 data_source = st.sidebar.selectbox(
     "Choose Analysis Mode:",
-    ["User Specified", "Sample Data"]
+    ["User Specified (File Upload)", "Copy & Paste Bulk Data", "Sample Data"]
 )
 
 df = None
 
-if data_source == "User Specified":
+if data_source == "User Specified (File Upload)":
     st.sidebar.subheader("2. Upload Dataset")
     uploaded_file = st.sidebar.file_uploader("Upload Excel Dataset (.xlsx / .xls)", type=["xlsx", "xls"])
 
@@ -54,21 +54,54 @@ if data_source == "User Specified":
         st.info("👈 Please upload an Excel dataset in the sidebar to begin analysis.")
         st.stop()
 
+elif data_source == "Copy & Paste Bulk Data":
+    st.sidebar.subheader("2. Paste Data")
+    st.sidebar.caption("Paste two columns from Excel (Timestamp / Date and Raw Probe Reading in µm).")
+    pasted_data = st.sidebar.text_area(
+        "Paste Raw Data Here (Tab or Comma separated):",
+        height=180,
+        placeholder="2025-01-01\t0.0\n2025-02-01\t-120.5\n2025-03-01\t-250.0..."
+    )
+
+    st.sidebar.subheader("3. Engineering Parameters")
+    NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.500, step=0.001, format="%.3f")
+    BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
+    BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
+    MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.500, step=0.001, format="%.3f")
+    CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
+
+    if pasted_data.strip():
+        try:
+            df = pd.read_csv(io.StringIO(pasted_data), sep=r'\s+|,', engine='python', header=None)
+        except Exception as e:
+            st.error(f"Error parsing pasted data: {e}")
+            st.stop()
+    else:
+        st.info("👈 Please paste tabular data in the sidebar text box to proceed.")
+        st.stop()
+
 else:  # Sample Data Mode
-    st.sidebar.success("✅ Running with Synthetic Historical Data")
+    st.sidebar.success("✅ Running with Synthetic Historical Data (Worst Case Progression)")
 
     st.sidebar.subheader("Adjust Thresholds (Editable)")
     NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.500, step=0.001, format="%.3f")
     BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
     BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
-    MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.300, step=0.001, format="%.3f")
+    MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.500, step=0.001, format="%.3f")
     CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
 
+    # Generate Synthetic Data degrading from ~2.5 mm down to ~1.4 mm clearance (~1100 um total wear)
     np.random.seed(42)
-    dates = pd.date_range(end=datetime.now(), periods=18, freq='30D')
-    days_passed = np.arange(18) * 30
-    synthetic_wear = 0.05 * (days_passed ** 1.3) + np.random.normal(0, 15, 18)
-    raw_readings = -np.abs(synthetic_wear)
+    n_points = 20
+    dates = pd.date_range(end=datetime.now(), periods=n_points, freq='30D')
+    days_passed = np.arange(n_points) * 30
+    
+    # Accelerated wear progression reaching ~1100 um near the end
+    target_total_wear = 1100.0  # Brings clearance down to 2.5 - 1.1 = 1.4 mm
+    base_wear = target_total_wear * (days_passed / days_passed[-1]) ** 1.35
+    noise = np.random.normal(0, 12, n_points)
+    synthetic_wear = np.maximum(0, base_wear + noise)
+    raw_readings = -synthetic_wear
 
     df = pd.DataFrame({
         "timestamp": dates,
