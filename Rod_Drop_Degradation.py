@@ -169,7 +169,17 @@ for name, (func, p0, bnds) in MODELS.items():
     except Exception:
         pass
 
-best_name = max(model_results, key=lambda k: model_results[k]["r2"])
+# --- MODEL SELECTION BY USER ---
+st.sidebar.header("4. Model Selection")
+auto_best = max(model_results, key=lambda k: model_results[k]["r2"])
+model_options = ["Auto (Select Best R²)"] + list(model_results.keys())
+selected_model_option = st.sidebar.selectbox("Regression Model Choice:", model_options)
+
+if selected_model_option == "Auto (Select Best R²)":
+    best_name = auto_best
+else:
+    best_name = selected_model_option
+
 best = model_results[best_name]
 
 # ==========================================
@@ -195,7 +205,7 @@ for name, res in model_results.items():
         "Model Name": name,
         "R² Score": f"{res['r2']:.4f}",
         "Residual Std (µm)": f"{res['resid_std']:.2f}",
-        "Status": "✅ Selected (Best Fit)" if name == best_name else "Candidate"
+        "Status": "✅ Selected" if name == best_name else ("Auto Best" if name == auto_best else "Candidate")
     })
 st.dataframe(pd.DataFrame(model_comparison_data), use_container_width=True)
 
@@ -261,7 +271,7 @@ for label, raw_alarm, (e, c, l), target_c in targets_info:
 st.table(pd.DataFrame(prognosis_data))
 
 # ==========================================
-# 6. VISUALIZATION
+# 6. VISUALIZATION WITH BREACH MARKERS
 # ==========================================
 candidate_days = [d for d in [f_L[1], f_LL[1], f_Min[1]] if d is not None]
 x_max_plot = max(candidate_days) * 1.15 if candidate_days else days[-1] * 2
@@ -273,19 +283,42 @@ dates_plot = [t0 + timedelta(days=d) for d in x_plot]
 t_val = stats.t.ppf((1 + CONFIDENCE_PCT / 100.0) / 2, best["dof"]) if best["dof"] >= 1 else 0.0
 band_mm = (t_val * best["resid_std"]) / 1000.0
 
+# Breach Points Pre-processing for Annotations
+breach_events = [
+    ("L Alarm", f_L[1], CLEARANCE_AT_L, "#ff7f0e"),
+    ("LL Alarm", f_LL[1], CLEARANCE_AT_LL, "#d62728"),
+    ("Min Limit", f_Min[1], MIN_CLEARANCE, "black")
+]
+
 # --- 6A. STATIC GRAPH FOR PDF REPORT & ZIP ARCHIVE (MATPLOTLIB) ---
 fig_static, ax = plt.subplots(figsize=(10, 5), dpi=150)
 ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=25, alpha=0.8, label="Measured Observations")
-ax.plot(dates_plot, y_clear_plot, color="#d62728", linewidth=2, label=f"Best Fit ({best_name})")
+ax.plot(dates_plot, y_clear_plot, color="#d62728", linewidth=2, label=f"Fit ({best_name})")
 ax.fill_between(dates_plot, y_clear_plot - band_mm, y_clear_plot + band_mm, color="#d62728", alpha=0.15, label=f"{CONFIDENCE_PCT:.0f}% CI")
 
 ax.axhline(CLEARANCE_AT_L, color="#ff7f0e", linestyle="--", linewidth=1.5, label=f"L Alarm ({CLEARANCE_AT_L:.3f} mm)")
 ax.axhline(CLEARANCE_AT_LL, color="#d62728", linestyle="--", linewidth=1.5, label=f"LL Alarm ({CLEARANCE_AT_LL:.3f} mm)")
 ax.axhline(MIN_CLEARANCE, color="black", linestyle=":", linewidth=1.5, label=f"Min Clearance ({MIN_CLEARANCE:.3f} mm)")
 
+# Add Callout Markers for Matplotlib Plot
+for name, breach_d, clear_val, color in breach_events:
+    if breach_d is not None:
+        b_date = t0 + timedelta(days=breach_d)
+        ax.plot(b_date, clear_val, marker='o', markersize=7, color=color, markeredgecolor='black')
+        ax.annotate(
+            f"{name}\n{b_date.strftime('%Y-%m-%d')}",
+            xy=(b_date, clear_val),
+            xytext=(15, 15),
+            textcoords='offset points',
+            fontsize=7,
+            fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.3', fc='yellow', alpha=0.5),
+            arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0', color=color, lw=1)
+        )
+
 ax.set_ylabel("Clearance (mm)")
 ax.set_xlabel("Date")
-ax.set_title("Piston Rod Clearance Prognostic Trend", fontweight="bold")
+ax.set_title(f"Piston Rod Clearance Prognostic Trend ({best_name})", fontweight="bold")
 ax.legend(loc="lower left", fontsize=8)
 ax.grid(True, linestyle=":", alpha=0.6)
 fig_static.autofmt_xdate()
@@ -308,7 +341,7 @@ fig_interactive.add_trace(go.Scatter(
     marker=dict(color='#1f77b4', size=8)
 ))
 
-# 2. Lower Confidence Band (Base Line for Fill)
+# 2. Lower Confidence Band
 fig_interactive.add_trace(go.Scatter(
     x=dates_plot,
     y=y_clear_plot - band_mm,
@@ -318,7 +351,7 @@ fig_interactive.add_trace(go.Scatter(
     hoverinfo="skip"
 ))
 
-# 3. Upper Confidence Band (Fills down to Lower Band)
+# 3. Upper Confidence Band
 fig_interactive.add_trace(go.Scatter(
     x=dates_plot,
     y=y_clear_plot + band_mm,
@@ -330,12 +363,12 @@ fig_interactive.add_trace(go.Scatter(
     hoverinfo="skip"
 ))
 
-# 4. Best Fit Line
+# 4. Fitted Line
 fig_interactive.add_trace(go.Scatter(
     x=dates_plot,
     y=y_clear_plot,
     mode='lines',
-    name=f'Best Fit ({best_name})',
+    name=f'Model ({best_name})',
     line=dict(color='#d62728', width=2)
 ))
 
@@ -344,8 +377,23 @@ fig_interactive.add_hline(y=CLEARANCE_AT_L, line_dash="dash", line_color="#ff7f0
 fig_interactive.add_hline(y=CLEARANCE_AT_LL, line_dash="dash", line_color="#d62728", annotation_text=f"LL Alarm ({CLEARANCE_AT_LL:.3f} mm)", annotation_position="bottom right")
 fig_interactive.add_hline(y=MIN_CLEARANCE, line_dash="dot", line_color="black", annotation_text=f"Min Clearance ({MIN_CLEARANCE:.3f} mm)", annotation_position="bottom right")
 
+# 6. Add Callout Markers & Annotations on Interactive Graph
+for name, breach_d, clear_val, color in breach_events:
+    if breach_d is not None:
+        b_date = t0 + timedelta(days=breach_d)
+        fig_interactive.add_trace(go.Scatter(
+            x=[b_date],
+            y=[clear_val],
+            mode='markers+text',
+            name=f'Breach: {name}',
+            marker=dict(color=color, size=11, symbol='diamond', line=dict(color='black', width=1)),
+            text=[f"<b>{name} Breach</b><br>{b_date.strftime('%Y-%m-%d')}"],
+            textposition="top right",
+            hoverinfo="text"
+        ))
+
 fig_interactive.update_layout(
-    title=dict(text="<b>Piston Rod Clearance Prognostic Trend</b>", x=0.5),
+    title=dict(text=f"<b>Piston Rod Clearance Prognostic Trend ({best_name})</b>", x=0.5),
     xaxis_title="Date",
     yaxis_title="Clearance (mm)",
     hovermode="x unified",
@@ -463,7 +511,7 @@ def generate_pdf_report(filename):
     story.append(PageBreak())
 
     # SECTION 4 (PAGE 2): VISUALIZATION
-    story.append(Paragraph("PROGNOSTIC TREND VISUALISATION", section_style))
+    story.append(Paragraph(f"PROGNOSTIC TREND VISUALISATION ({best_name})", section_style))
     story.append(Spacer(1, 10))
     story.append(RLImage(plot_img_path, width=500, height=250))
 
