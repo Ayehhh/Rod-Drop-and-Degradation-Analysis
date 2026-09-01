@@ -220,7 +220,7 @@ best = model_results[best_name]
 # ==========================================
 st.subheader("📊 Model Comparison & Fit Metrics")
 
-with st.expander("💡 Technical Guidance: Metrics & RUL Definition"):
+with st.expander("💡 Technical Guidance: Metrics, RUL & Model Selection Guide"):
     st.markdown("""
     * **Remaining Useful Life (RUL):** The estimated operational time remaining before rider ring wear breaches an alarm threshold or minimum clearance limit.
       $$\\text{RUL (Days)} = \\text{Expected Breach Date} - \\text{Last Observed Data Date}$$
