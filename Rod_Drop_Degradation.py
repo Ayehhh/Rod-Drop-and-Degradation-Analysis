@@ -225,7 +225,7 @@ with st.expander("💡 Technical Guidance: Metrics, RUL & Model Selection Guide"
     * **Remaining Useful Life (RUL):** The estimated operational time remaining before rider ring wear breaches an alarm threshold or minimum clearance limit.
       $$\\text{RUL (Days)} = \\text{Expected Breach Date} - \\text{Last Observed Data Date}$$
     * **Residual Standard Deviation (Residual Std in µm):** Measures the physical noise or distance between actual rod drop readings and fitted model predictions. Lower values signify higher accuracy.
-    * **$R^2$ Score (Coefficient of Determination):** Quantifies how well the variance in degradation is captured by the time variable ($1.0$ is perfect fit).
+    * **$R^2$  (Coefficient of Determination):** Quantifies how well the variance in degradation is captured by the time variable ($1.0$ is perfect fit).
     * **Model Selection Recommendation:** 
         * **Power Law / Linear / Quadratic:** Recommended for steady mechanical wear scenarios where friction steadily increases over operational hours.
         * **Exponential:** Best suited for severe wear acceleration prior to total material fatigue.
@@ -236,7 +236,7 @@ model_comparison_data = []
 for name, res in model_results.items():
     model_comparison_data.append({
         "Model Name": name,
-        "R² Score": f"{res['r2']:.4f}",
+        "R² Score": f"{res['r2']:.3g}",
         "Residual Std (µm)": f"{res['resid_std']:.2f}",
         "Status": "✅ Selected" if name == best_name else ("Auto Best" if name == auto_best else "Candidate")
     })
@@ -294,7 +294,7 @@ for label, raw_alarm, (e, c, l), target_c in targets_info:
     prognosis_data.append({
         "Threshold Level": label,
         "Alarm Threshold (um)": f"{raw_alarm:.1f}",
-        "Target Clearance (mm)": f"{target_c:.3f}",
+        "Target Clearance (mm)": f"{target_c:.3g}",
         "Earliest Date": e_date,
         "Expected Date": c_date,
         "Latest Date": l_date,
