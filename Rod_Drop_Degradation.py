@@ -87,7 +87,7 @@ else:  # Sample Data Mode
     NEW_CLEARANCE = st.sidebar.number_input("As-New Clearance [mm]", value=2.500, step=0.001, format="%.3f")
     BN_L_THRESHOLD = st.sidebar.number_input("Bently Nevada L Alarm Threshold [µm]", value=-1500.0, step=10.0, format="%.1f")
     BN_LL_THRESHOLD = st.sidebar.number_input("Bently Nevada LL Alarm Threshold [µm]", value=-2000.0, step=10.0, format="%.1f")
-    MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.300, step=0.001, format="%.3f")
+    MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.300, step=0.001, format="%.3g")
     CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
 
     # Generate Synthetic Data degrading from ~2.5 mm down to ~1.4 mm clearance (~1100 um total wear)
