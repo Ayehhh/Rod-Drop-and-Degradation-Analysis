@@ -485,7 +485,7 @@ def generate_pdf_report(filename):
     story.append(Paragraph("MODEL COMPARISON & FIT METRICS", section_style))
     comp_headers = [
         Paragraph("Model Name", hdr_style_l), 
-        Paragraph("R² Score", hdr_style), 
+        Paragraph("R² Score (%)", hdr_style), 
         Paragraph("Residual Std (um)", hdr_style), 
         Paragraph("Status", hdr_style)
     ]
@@ -493,7 +493,7 @@ def generate_pdf_report(filename):
     for row in model_comparison_data:
         comp_table_data.append([
             Paragraph(row["Model Name"], body_style_l),
-            Paragraph(row["R² Score"], body_style),
+            Paragraph(row["R² Score (%)"], body_style),
             Paragraph(row["Residual Std (µm)"], body_style),
             Paragraph(row["Status"], body_style)
         ])
