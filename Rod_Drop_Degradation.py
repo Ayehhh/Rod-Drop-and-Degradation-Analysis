@@ -225,7 +225,7 @@ with st.expander("💡 Technical Guidance: Metrics, RUL & Model Selection Guide"
     * **Remaining Useful Life (RUL):** The estimated operational time remaining before rider ring wear breaches an alarm threshold or minimum clearance limit.
       $$\\text{RUL (Days)} = \\text{Expected Breach Date} - \\text{Last Observed Data Date}$$
     * **Residual Standard Deviation (Residual Std in µm):** Measures the physical noise or distance between actual rod drop readings and fitted model predictions. Lower values signify higher accuracy.
-    * **$R^2$  (Coefficient of Determination):** Quantifies how well the variance in degradation is captured by the time variable ($1.0$ is perfect fit).
+    * **$R^2$  (Coefficient of Determination):** Quantifies how well the variance in degradation is captured by the time variable ($100\%$ indicates a perfect mathematical fit).
     * **Model Selection Recommendation:** 
         * **Power Law / Linear / Quadratic:** Recommended for steady mechanical wear scenarios where friction steadily increases over operational hours.
         * **Exponential:** Best suited for severe wear acceleration prior to total material fatigue.
@@ -236,7 +236,7 @@ model_comparison_data = []
 for name, res in model_results.items():
     model_comparison_data.append({
         "Model Name": name,
-        "R² Score": f"{res['r2']:.3g}",
+        "R² Score": f"{res['r2']:*100.2f}",
         "Residual Std (µm)": f"{res['resid_std']:.2f}",
         "Status": "✅ Selected" if name == best_name else ("Auto Best" if name == auto_best else "Candidate")
     })
@@ -269,7 +269,7 @@ f_LL = solve_crossing(best, WEAR_TARGET_LL, CONFIDENCE_PCT, max_horizon)
 f_Min = solve_crossing(best, WEAR_TARGET_MIN, CONFIDENCE_PCT, max_horizon)
 
 m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Selected Model", f"{best_name}", f"R² = {best['r2']:.4f}")
+m1.metric("Selected Model", f"{best_name}", f"R² = {best['r2'] *100:.2f}")
 m2.metric("Current Average Probe Position", f"{latest_raw_um:.1f} µm")
 m3.metric("Current Clearance", f"{latest_clearance_mm:.3f} mm")
 m4.metric("Min Historical Clearance", f"{min_hist_clearance_mm:.3f} mm")
