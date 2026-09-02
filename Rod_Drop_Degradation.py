@@ -236,7 +236,7 @@ model_comparison_data = []
 for name, res in model_results.items():
     model_comparison_data.append({
         "Model Name": name,
-        "R² Score": f"{res['r2']*100:.2f}",
+        "R² Score (%)": f"{res['r2']*100:.2f}",
         "Residual Std (µm)": f"{res['resid_std']:.2f}",
         "Status": "✅ Selected" if name == best_name else ("Auto Best" if name == auto_best else "Candidate")
     })
