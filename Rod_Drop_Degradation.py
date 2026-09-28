@@ -438,29 +438,51 @@ fig_interactive.update_layout(
 st.plotly_chart(fig_interactive, use_container_width=True)
 
 # ==========================================
-# 7. REPORT GENERATION (UPDATED WITH ADJUSTED WIDTHS)
+# 7. REPORT GENERATION (KEMASKINI LEBAR 100% SAMA)
 # ==========================================
 pdf_file_path = os.path.join(OUTPUT_DIR, f"Piston_Rod_Clearance_Prognostic_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
 
 def generate_pdf_report(filename):
-    # Printable area width = 612 - 36 - 36 = 540 pt
-    MARGIN_LEFT = 36
-    MARGIN_RIGHT = 36
-    PRINTABLE_WIDTH = 612 - (MARGIN_LEFT + MARGIN_RIGHT) # 540 pt
+    # Ukuran Halaman Letter: 612 pt
+    # Margin: Kiri (36 pt) + Kanan (36 pt) = 72 pt
+    # Lebar Kawasan Cetakan Sebenar (Printable Width) = 540 pt
+    MARGIN = 36
+    TARGET_WIDTH = 540 
 
     doc = SimpleDocTemplate(
         filename, 
         pagesize=letter, 
-        rightMargin=MARGIN_RIGHT, 
-        leftMargin=MARGIN_LEFT, 
-        topMargin=36, 
-        bottomMargin=36
+        rightMargin=MARGIN, 
+        leftMargin=MARGIN, 
+        topMargin=MARGIN, 
+        bottomMargin=MARGIN
     )
     styles = getSampleStyleSheet()
     story = []
 
-    title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontName='Helvetica-Bold', fontSize=13, textColor=colors.HexColor('#1B365D'), alignment=1, spaceAfter=12)
-    section_style = ParagraphStyle('SectionStyle', parent=styles['Heading2'], fontName='Helvetica-Bold', fontSize=10, textColor=colors.HexColor('#FFFFFF'), backColor=colors.HexColor('#4A777A'), spaceBefore=10, spaceAfter=6, leftIndent=4)
+    # Gaya Tajuk & Seksyen (Dikemaskini tanpa leftIndent supaya selari)
+    title_style = ParagraphStyle(
+        'TitleStyle', 
+        parent=styles['Heading1'], 
+        fontName='Helvetica-Bold', 
+        fontSize=12, 
+        textColor=colors.HexColor('#1B365D'), 
+        alignment=1, 
+        spaceAfter=10
+    )
+    
+    section_style = ParagraphStyle(
+        'SectionStyle', 
+        parent=styles['Heading2'], 
+        fontName='Helvetica-Bold', 
+        fontSize=9, 
+        textColor=colors.HexColor('#FFFFFF'), 
+        backColor=colors.HexColor('#4A777A'), 
+        spaceBefore=8, 
+        spaceAfter=6, 
+        leftIndent=0,       # Ditetapkan ke 0 supaya selari dengan margin kiri jadual
+        borderPadding=3     # Memberi ruang padding di dalam bar header
+    )
 
     hdr_style = ParagraphStyle('TH', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=1)
     hdr_style_l = ParagraphStyle('THL', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=0)
@@ -468,10 +490,10 @@ def generate_pdf_report(filename):
     body_style_l = ParagraphStyle('TDL', fontName='Helvetica', fontSize=8, leading=10, alignment=0)
 
     story.append(Paragraph("DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR ROD DROP AND ESTIMATED CLEARANCE", title_style))
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 4))
 
     # SECTION 1: TECHNICAL SPECIFICATIONS
-    # Total colWidths sum = 310 + 120 + 110 = 540 pt
+    # Lebar: 300 + 120 + 120 = 540 pt
     story.append(Paragraph("TECHNICAL SPECIFICATIONS & THRESHOLDS", section_style))
     spec_data = [
         [Paragraph("Parameter", hdr_style_l), Paragraph("Value", hdr_style), Paragraph("Unit", hdr_style)],
@@ -483,19 +505,21 @@ def generate_pdf_report(filename):
         [Paragraph("Calculated LL Clearance Limit", body_style_l), Paragraph(f"{CLEARANCE_AT_LL:.3f}", body_style), Paragraph("mm", body_style)],
         [Paragraph("Statistical Confidence Level", body_style_l), Paragraph(f"{CONFIDENCE_PCT:.1f}", body_style), Paragraph("%", body_style)]
     ]
-    t_spec = Table(spec_data, colWidths=[310, 120, 110])
+    t_spec = Table(spec_data, colWidths=[300, 120, 120])
     t_spec.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
     ]))
     story.append(t_spec)
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
     # SECTION 2: MODEL COMPARISON
-    # Total colWidths sum = 180 + 110 + 120 + 130 = 540 pt
+    # Lebar: 180 + 120 + 120 + 120 = 540 pt
     story.append(Paragraph("MODEL COMPARISON & FIT METRICS", section_style))
     comp_headers = [
         Paragraph("Model Name", hdr_style_l), 
@@ -512,19 +536,21 @@ def generate_pdf_report(filename):
             Paragraph(row["Status"], body_style)
         ])
 
-    t_comp = Table(comp_table_data, colWidths=[180, 110, 120, 130])
+    t_comp = Table(comp_table_data, colWidths=[180, 120, 120, 120])
     t_comp.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('TOPPADDING', (0, 0), (-1, -1), 3),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
     ]))
     story.append(t_comp)
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
     # SECTION 3: PROGNOSTIC BREACH
-    # Total colWidths sum = 115 + 85 + 85 + 85 + 85 + 85 = 540 pt
+    # Lebar: 115 + 85 + 85 + 85 + 85 + 85 = 540 pt
     story.append(Paragraph("PROGNOSTIC BREACH PROJECTION SUMMARY", section_style))
     prog_headers = [
         Paragraph("Threshold Level", hdr_style_l), 
@@ -551,18 +577,20 @@ def generate_pdf_report(filename):
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 4),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
     ]))
     story.append(t_prog)
 
     story.append(PageBreak())
 
     # SECTION 4 (PAGE 2): VISUALIZATION
-    # Image width matched to full printable width (540 pt)
+    # Graf ditetapkan ke lebar tepat 540 pt
     story.append(Paragraph(f"PROGNOSTIC TREND VISUALISATION ({best_name})", section_style))
-    story.append(Spacer(1, 10))
-    story.append(RLImage(plot_img_path, width=540, height=270))
+    story.append(Spacer(1, 8))
+    story.append(RLImage(plot_img_path, width=TARGET_WIDTH, height=270))
 
     doc.build(story)
 
