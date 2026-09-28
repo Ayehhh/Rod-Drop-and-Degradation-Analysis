@@ -438,12 +438,24 @@ fig_interactive.update_layout(
 st.plotly_chart(fig_interactive, use_container_width=True)
 
 # ==========================================
-# 7. REPORT GENERATION
+# 7. REPORT GENERATION (UPDATED WITH ADJUSTED WIDTHS)
 # ==========================================
 pdf_file_path = os.path.join(OUTPUT_DIR, f"Piston_Rod_Clearance_Prognostic_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
 
 def generate_pdf_report(filename):
-    doc = SimpleDocTemplate(filename, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+    # Printable area width = 612 - 36 - 36 = 540 pt
+    MARGIN_LEFT = 36
+    MARGIN_RIGHT = 36
+    PRINTABLE_WIDTH = 612 - (MARGIN_LEFT + MARGIN_RIGHT) # 540 pt
+
+    doc = SimpleDocTemplate(
+        filename, 
+        pagesize=letter, 
+        rightMargin=MARGIN_RIGHT, 
+        leftMargin=MARGIN_LEFT, 
+        topMargin=36, 
+        bottomMargin=36
+    )
     styles = getSampleStyleSheet()
     story = []
 
@@ -459,6 +471,7 @@ def generate_pdf_report(filename):
     story.append(Spacer(1, 6))
 
     # SECTION 1: TECHNICAL SPECIFICATIONS
+    # Total colWidths sum = 310 + 120 + 110 = 540 pt
     story.append(Paragraph("TECHNICAL SPECIFICATIONS & THRESHOLDS", section_style))
     spec_data = [
         [Paragraph("Parameter", hdr_style_l), Paragraph("Value", hdr_style), Paragraph("Unit", hdr_style)],
@@ -470,7 +483,7 @@ def generate_pdf_report(filename):
         [Paragraph("Calculated LL Clearance Limit", body_style_l), Paragraph(f"{CLEARANCE_AT_LL:.3f}", body_style), Paragraph("mm", body_style)],
         [Paragraph("Statistical Confidence Level", body_style_l), Paragraph(f"{CONFIDENCE_PCT:.1f}", body_style), Paragraph("%", body_style)]
     ]
-    t_spec = Table(spec_data, colWidths=[270, 130, 100])
+    t_spec = Table(spec_data, colWidths=[310, 120, 110])
     t_spec.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -482,6 +495,7 @@ def generate_pdf_report(filename):
     story.append(Spacer(1, 8))
 
     # SECTION 2: MODEL COMPARISON
+    # Total colWidths sum = 180 + 110 + 120 + 130 = 540 pt
     story.append(Paragraph("MODEL COMPARISON & FIT METRICS", section_style))
     comp_headers = [
         Paragraph("Model Name", hdr_style_l), 
@@ -498,7 +512,7 @@ def generate_pdf_report(filename):
             Paragraph(row["Status"], body_style)
         ])
 
-    t_comp = Table(comp_table_data, colWidths=[130, 100, 120, 150])
+    t_comp = Table(comp_table_data, colWidths=[180, 110, 120, 130])
     t_comp.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -510,6 +524,7 @@ def generate_pdf_report(filename):
     story.append(Spacer(1, 8))
 
     # SECTION 3: PROGNOSTIC BREACH
+    # Total colWidths sum = 115 + 85 + 85 + 85 + 85 + 85 = 540 pt
     story.append(Paragraph("PROGNOSTIC BREACH PROJECTION SUMMARY", section_style))
     prog_headers = [
         Paragraph("Threshold Level", hdr_style_l), 
@@ -531,7 +546,7 @@ def generate_pdf_report(filename):
             Paragraph(row["Latest Date"], body_style)
         ])
 
-    t_prog = Table(prog_table_data, colWidths=[90, 85, 85, 80, 80, 80])
+    t_prog = Table(prog_table_data, colWidths=[115, 85, 85, 85, 85, 85])
     t_prog.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
@@ -544,9 +559,10 @@ def generate_pdf_report(filename):
     story.append(PageBreak())
 
     # SECTION 4 (PAGE 2): VISUALIZATION
+    # Image width matched to full printable width (540 pt)
     story.append(Paragraph(f"PROGNOSTIC TREND VISUALISATION ({best_name})", section_style))
     story.append(Spacer(1, 10))
-    story.append(RLImage(plot_img_path, width=500, height=250))
+    story.append(RLImage(plot_img_path, width=540, height=270))
 
     doc.build(story)
 
