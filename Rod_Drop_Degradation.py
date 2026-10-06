@@ -27,7 +27,7 @@ st.title("⚙️ Reciprocating Compressor Rod Drop Degradation and Prognostic An
 st.markdown("This tool models the physical wear rate of compressor rider rings (Degradation Analysis) and uses predictive mathematical models to project the exact date when rod drop will exceed safety thresholds (Prognostic Analysis).")
 st.caption(
     "Developed by Harith Irfan. Contact me for further information"
-    " @ mharithirfan14@gmail.com")
+    " @ mharithirfan14@icloud.com")
 # ==========================================
 # 1. DATA SOURCE & PARAMETERS CONFIGURATION
 # ==========================================
