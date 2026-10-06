@@ -484,7 +484,7 @@ def generate_pdf_report(filename):
         [Paragraph("Metric Description", hdr_style_l), Paragraph("Value", hdr_style), Paragraph("Unit / Info", hdr_style)],
         [Paragraph("Last Data Date", body_style_l), Paragraph(f"{latest_timestamp}", body_style), Paragraph("-", body_style)],
         [Paragraph("Latest Raw Probe Reading", body_style_l), Paragraph(f"{latest_raw_um:.1f}", body_style), Paragraph("um", body_style)],
-        [Paragraph("Latest Calculated Wear", body_style_l), Paragraph(f"{latest_wear_um:.1f}", body_style), Paragraph("um", body_style)],
+       # [Paragraph("Latest Calculated Wear", body_style_l), Paragraph(f"{latest_wear_um:.1f}", body_style), Paragraph("um", body_style)],
         [Paragraph("Current Estimated Clearance", body_style_l), Paragraph(f"{latest_clearance_mm:.3f}", body_style), Paragraph("mm", body_style)],
         [Paragraph("Minimum Historical Clearance Recorded", body_style_l), Paragraph(f"{min_hist_clearance_mm:.3f}", body_style), Paragraph("mm", body_style)],
         [Paragraph("Estimated RUL to LL Alarm", body_style_l), Paragraph(f"{ll_rul_str}", body_style), Paragraph(f"Fit Model: {best_name}", body_style)]
