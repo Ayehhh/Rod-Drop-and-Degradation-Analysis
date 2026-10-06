@@ -317,4 +317,288 @@ plot_title = f"Piston Rod Clearance Prognostic Trend{asset_title_suffix} ({best_
 # --- 6A. STATIC GRAPH FOR PDF REPORT & ZIP ARCHIVE (MATPLOTLIB) ---
 fig_static, ax = plt.subplots(figsize=(10, 5), dpi=150)
 ax.scatter(df["timestamp"], df["clearance_mm"], color="#1f77b4", s=25, alpha=0.8, label="Measured Observations")
-ax.plot(dates_plot, y_clear_plot, color="#d62728", linewidth=2, label=f
+ax.plot(dates_plot, y_clear_plot, color="#d62728", linewidth=2, label=f"Fit ({best_name})")
+ax.fill_between(dates_plot, y_clear_plot - band_mm, y_clear_plot + band_mm, color="#d62728", alpha=0.15, label=f"{CONFIDENCE_PCT:.0f}% CI")
+
+ax.axhline(CLEARANCE_AT_L, color="#ff7f0e", linestyle="--", linewidth=1.5, label=f"L Alarm ({CLEARANCE_AT_L:.3f} mm)")
+ax.axhline(CLEARANCE_AT_LL, color="#d62728", linestyle="--", linewidth=1.5, label=f"LL Alarm ({CLEARANCE_AT_LL:.3f} mm)")
+ax.axhline(MIN_CLEARANCE, color="black", linestyle=":", linewidth=1.5, label=f"Min Clearance ({MIN_CLEARANCE:.3f} mm)")
+
+for name, breach_d, clear_val, color in breach_events:
+    if breach_d is not None:
+        b_date = t0 + timedelta(days=breach_d)
+        ax.plot(b_date, clear_val, marker='o', markersize=7, color=color, markeredgecolor='black')
+        ax.annotate(
+            f"{name}\n{b_date.strftime('%Y-%m-%d')}",
+            xy=(b_date, clear_val),
+            xytext=(15, 15),
+            textcoords='offset points',
+            fontsize=7,
+            fontweight='bold',
+            bbox=dict(boxstyle='round,pad=0.3', fc='yellow', alpha=0.5),
+            arrowprops=dict(arrowstyle='->', connectionstyle='arc3,rad=0', color=color, lw=1)
+        )
+
+ax.set_ylabel("Clearance (mm)")
+ax.set_xlabel("Date")
+ax.set_title(plot_title, fontweight="bold")
+ax.legend(loc="lower left", fontsize=8)
+ax.grid(True, linestyle=":", alpha=0.6)
+fig_static.autofmt_xdate()
+fig_static.tight_layout()
+
+plot_img_path = os.path.join(OUTPUT_DIR, "clearance_trend_plot_en.png")
+fig_static.savefig(plot_img_path, dpi=150, bbox_inches="tight")
+plt.close(fig_static)
+
+# --- 6B. INTERACTIVE GRAPH FOR STREAMLIT UI (PLOTLY) ---
+fig_interactive = go.Figure()
+
+fig_interactive.add_trace(go.Scatter(
+    x=df["timestamp"], y=df["clearance_mm"],
+    mode='markers', name='Measured Observations',
+    marker=dict(color='#1f77b4', size=8)
+))
+
+fig_interactive.add_trace(go.Scatter(
+    x=dates_plot, y=y_clear_plot - band_mm,
+    mode='lines', line=dict(color='rgba(255,255,255,0)'),
+    showlegend=False, hoverinfo="skip"
+))
+
+fig_interactive.add_trace(go.Scatter(
+    x=dates_plot, y=y_clear_plot + band_mm,
+    mode='lines', fill='tonexty',
+    fillcolor='rgba(214, 39, 40, 0.15)',
+    line=dict(color='rgba(255,255,255,0)'),
+    name=f"{CONFIDENCE_PCT:.0f}% Confidence Interval",
+    hoverinfo="skip"
+))
+
+fig_interactive.add_trace(go.Scatter(
+    x=dates_plot, y=y_clear_plot,
+    mode='lines', name=f'Model ({best_name})',
+    line=dict(color='#d62728', width=2)
+))
+
+fig_interactive.add_hline(y=CLEARANCE_AT_L, line_dash="dash", line_color="#ff7f0e", annotation_text=f"L Alarm ({CLEARANCE_AT_L:.3f} mm)", annotation_position="bottom right")
+fig_interactive.add_hline(y=CLEARANCE_AT_LL, line_dash="dash", line_color="#d62728", annotation_text=f"LL Alarm ({CLEARANCE_AT_LL:.3f} mm)", annotation_position="bottom right")
+fig_interactive.add_hline(y=MIN_CLEARANCE, line_dash="dot", line_color="black", annotation_text=f"Min Clearance ({MIN_CLEARANCE:.3f} mm)", annotation_position="bottom right")
+
+for name, breach_d, clear_val, color in breach_events:
+    if breach_d is not None:
+        b_date = t0 + timedelta(days=breach_d)
+        fig_interactive.add_trace(go.Scatter(
+            x=[b_date], y=[clear_val],
+            mode='markers+text',
+            name=f'Breach: {name}',
+            marker=dict(color=color, size=11, symbol='diamond', line=dict(color='black', width=1)),
+            text=[f"<b>{name} Breach</b><br>{b_date.strftime('%Y-%m-%d')}"],
+            textposition="top right",
+            hoverinfo="text"
+        ))
+
+fig_interactive.update_layout(
+    title=dict(text=f"<b>{plot_title}</b>", x=0.5),
+    xaxis_title="Date",
+    yaxis_title="Clearance (mm)",
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+    margin=dict(l=40, r=40, t=50, b=50),
+    template="plotly_white"
+)
+
+st.plotly_chart(fig_interactive, use_container_width=True)
+
+# ==========================================
+# 7. REPORT GENERATION
+# ==========================================
+pdf_file_path = os.path.join(OUTPUT_DIR, f"Piston_Rod_Clearance_Prognostic_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf")
+
+def generate_pdf_report(filename):
+    MARGIN = 36
+    TARGET_WIDTH = 540 
+
+    doc = SimpleDocTemplate(
+        filename, pagesize=letter,
+        rightMargin=MARGIN, leftMargin=MARGIN,
+        topMargin=MARGIN, bottomMargin=MARGIN
+    )
+    styles = getSampleStyleSheet()
+    story = []
+
+    report_title = f"DEGRADATION AND PROGNOSTIC ANALYSIS REPORT FOR ROD DROP{asset_title_suffix.upper()}"
+
+    title_style = ParagraphStyle(
+        'TitleStyle', parent=styles['Heading1'],
+        fontName='Helvetica-Bold', fontSize=12,
+        textColor=colors.HexColor('#1B365D'), alignment=1, spaceAfter=10
+    )
+    
+    section_style = ParagraphStyle(
+        'SectionStyle', parent=styles['Heading2'],
+        fontName='Helvetica-Bold', fontSize=9,
+        textColor=colors.HexColor('#FFFFFF'), backColor=colors.HexColor('#4A777A'),
+        spaceBefore=8, spaceAfter=6, leftIndent=0, borderPadding=3
+    )
+
+    hdr_style = ParagraphStyle('TH', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=1)
+    hdr_style_l = ParagraphStyle('THL', fontName='Helvetica-Bold', fontSize=8, leading=10, textColor=colors.whitesmoke, alignment=0)
+    body_style = ParagraphStyle('TD', fontName='Helvetica', fontSize=8, leading=10, alignment=1)
+    body_style_l = ParagraphStyle('TDL', fontName='Helvetica', fontSize=8, leading=10, alignment=0)
+
+    story.append(Paragraph(report_title, title_style))
+    story.append(Spacer(1, 4))
+
+    # SECTION 1: TECHNICAL SPECIFICATIONS & ASSET DETAILS
+    story.append(Paragraph("1. TECHNICAL SPECIFICATIONS & ASSET DETAILS", section_style))
+    spec_data = [
+        [Paragraph("Parameter", hdr_style_l), Paragraph("Value", hdr_style), Paragraph("Unit", hdr_style)],
+        [Paragraph("Complex / Plant Name", body_style_l), Paragraph(f"{COMPLEX_NAME}", body_style), Paragraph("-", body_style)],
+        [Paragraph("Asset Tag / Name", body_style_l), Paragraph(f"{ASSET_TAG}", body_style), Paragraph("-", body_style)],
+        [Paragraph("As-Left Bottom Piston-to-Liner Clearance", body_style_l), Paragraph(f"{NEW_CLEARANCE:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Bently Nevada L Alarm Threshold", body_style_l), Paragraph(f"{BN_L_THRESHOLD:.1f}", body_style), Paragraph("um", body_style)],
+        [Paragraph("Bently Nevada LL Alarm Threshold", body_style_l), Paragraph(f"{BN_LL_THRESHOLD:.1f}", body_style), Paragraph("um", body_style)],
+        [Paragraph("Minimum Allowable Clearance (OEM)", body_style_l), Paragraph(f"{MIN_CLEARANCE:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Calculated L Clearance Limit", body_style_l), Paragraph(f"{CLEARANCE_AT_L:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Calculated LL Clearance Limit", body_style_l), Paragraph(f"{CLEARANCE_AT_LL:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Statistical Confidence Level", body_style_l), Paragraph(f"{CONFIDENCE_PCT:.1f}", body_style), Paragraph("%", body_style)]
+    ]
+    t_spec = Table(spec_data, colWidths=[300, 120, 120])
+    t_spec.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t_spec)
+    story.append(Spacer(1, 6))
+
+    # SECTION 2: CURRENT OPERATIONAL STATUS (NEWLY ADDED)
+    story.append(Paragraph("2. CURRENT OPERATIONAL STATUS & READINGS", section_style))
+    ll_rul_str = next((r["RUL (Days)"] for r in prognosis_data if r["Threshold Level"] == "LL Alarm"), "N/A")
+    status_data = [
+        [Paragraph("Metric Description", hdr_style_l), Paragraph("Value", hdr_style), Paragraph("Unit / Info", hdr_style)],
+        [Paragraph("Last Data Date", body_style_l), Paragraph(f"{latest_timestamp}", body_style), Paragraph("-", body_style)],
+        [Paragraph("Latest Raw Probe Reading", body_style_l), Paragraph(f"{latest_raw_um:.1f}", body_style), Paragraph("um", body_style)],
+        [Paragraph("Latest Calculated Wear", body_style_l), Paragraph(f"{latest_wear_um:.1f}", body_style), Paragraph("um", body_style)],
+        [Paragraph("Current Estimated Clearance", body_style_l), Paragraph(f"{latest_clearance_mm:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Minimum Historical Clearance Recorded", body_style_l), Paragraph(f"{min_hist_clearance_mm:.3f}", body_style), Paragraph("mm", body_style)],
+        [Paragraph("Estimated RUL to LL Alarm", body_style_l), Paragraph(f"{ll_rul_str}", body_style), Paragraph(f"Fit Model: {best_name}", body_style)]
+    ]
+    t_status = Table(status_data, colWidths=[300, 120, 120])
+    t_status.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t_status)
+    story.append(Spacer(1, 6))
+
+    # SECTION 3: MODEL COMPARISON
+    story.append(Paragraph("3. MODEL COMPARISON & FIT METRICS", section_style))
+    comp_headers = [
+        Paragraph("Model Name", hdr_style_l), 
+        Paragraph("R² Score (%)", hdr_style), 
+        Paragraph("Residual Std (um)", hdr_style), 
+        Paragraph("Status", hdr_style)
+    ]
+    comp_table_data = [comp_headers]
+    for row in model_comparison_data:
+        comp_table_data.append([
+            Paragraph(row["Model Name"], body_style_l),
+            Paragraph(row["R² Score (%)"], body_style),
+            Paragraph(row["Residual Std (µm)"], body_style),
+            Paragraph(row["Status"], body_style)
+        ])
+
+    t_comp = Table(comp_table_data, colWidths=[180, 120, 120, 120])
+    t_comp.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t_comp)
+    story.append(Spacer(1, 6))
+
+    # SECTION 4: PROGNOSTIC BREACH
+    story.append(Paragraph("4. PROGNOSTIC BREACH PROJECTION SUMMARY", section_style))
+    prog_headers = [
+        Paragraph("Threshold Level", hdr_style_l), 
+        Paragraph("Alarm Threshold (um)", hdr_style), 
+        Paragraph("Target Clearance (mm)", hdr_style), 
+        Paragraph("Earliest Date", hdr_style), 
+        Paragraph("Expected Date", hdr_style), 
+        Paragraph("Latest Date", hdr_style)
+    ]
+    prog_table_data = [prog_headers]
+    
+    for row in prognosis_data:
+        prog_table_data.append([
+            Paragraph(row["Threshold Level"], body_style_l), 
+            Paragraph(row["Alarm Threshold (um)"], body_style), 
+            Paragraph(row["Target Clearance (mm)"], body_style), 
+            Paragraph(row["Earliest Date"], body_style), 
+            Paragraph(row["Expected Date"], body_style), 
+            Paragraph(row["Latest Date"], body_style)
+        ])
+
+    t_prog = Table(prog_table_data, colWidths=[115, 85, 85, 85, 85, 85])
+    t_prog.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1B365D')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+    ]))
+    story.append(t_prog)
+
+    story.append(PageBreak())
+
+    # SECTION 5 (PAGE 2): VISUALIZATION
+    story.append(Paragraph(f"5. PROGNOSTIC TREND VISUALISATION{asset_title_suffix.upper()} ({best_name})", section_style))
+    story.append(Spacer(1, 8))
+    story.append(RLImage(plot_img_path, width=TARGET_WIDTH, height=270))
+
+    doc.build(story)
+
+generate_pdf_report(pdf_file_path)
+
+# Archive ZIP Package
+zip_base_name = os.path.join(os.getcwd(), "Prognosis_Output_Files_Package")
+zip_archive_path = shutil.make_archive(zip_base_name, 'zip', OUTPUT_DIR)
+
+with open(pdf_file_path, "rb") as f:
+    pdf_bytes = f.read()
+
+with open(zip_archive_path, "rb") as f:
+    zip_bytes = f.read()
+
+# Download Section
+st.subheader("📥 Download Prognosis Reports")
+dcol1, dcol2 = st.columns(2)
+dcol1.download_button(
+    label="📄 Download Comprehensive PDF Report",
+    data=pdf_bytes,
+    file_name=os.path.basename(pdf_file_path),
+    mime="application/pdf"
+)
+dcol2.download_button(
+    label="📦 Download Complete ZIP Package (PDF + Image)",
+    data=zip_bytes,
+    file_name=f"Prognosis_Output_Files_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+    mime="application/zip"
+)
