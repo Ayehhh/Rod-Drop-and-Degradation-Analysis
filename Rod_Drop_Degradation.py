@@ -327,6 +327,13 @@ for label, raw_alarm, (e, c, l), target_c in targets_info:
 
 st.table(pd.DataFrame(prognosis_data))
 
+st.caption(
+    "⚠️ **Disclaimer:** The Remaining Useful Life (RUL) projections and breach dates are model-based estimations "
+    "derived from historical trend analysis. Actual rider ring wear rate is influenced by operational variables, including but "
+    "not limited to: process gas composition/purity, differential pressure ratios, lubrication efficiency, thermal "
+    "expansion, rod alignment variations, and compressor duty cycle changes."
+    "These projections serve as a decision-support guideline for proactive maintenance alongside physical inspections and condition monitoring."
+
 # ==========================================
 # 6. VISUALIZATION WITH BREACH MARKERS
 # ==========================================
@@ -602,10 +609,44 @@ def generate_pdf_report(filename):
 
     story.append(PageBreak())
 
-    # SECTION 5 (PAGE 2): VISUALIZATION
+# SECTION 5 (PAGE 2): VISUALIZATION
     story.append(Paragraph(f"5. PROGNOSTIC TREND VISUALISATION{asset_title_suffix.upper()} ({best_name})", section_style))
+    story.append(Spacer(1, 6))
+    story.append(RLImage(plot_img_path, width=TARGET_WIDTH, height=250))
     story.append(Spacer(1, 8))
-    story.append(RLImage(plot_img_path, width=TARGET_WIDTH, height=270))
+
+    # SECTION 6: DISCLAIMER & PROGNOSTIC ASSUMPTIONS
+    story.append(Paragraph("6. DISCLAIMER & PROGNOSTIC ASSUMPTIONS", section_style))
+    story.append(Spacer(1, 4))
+
+    disclaimer_style = ParagraphStyle(
+        'DisclaimerText', parent=styles['Normal'],
+        fontName='Helvetica-Oblique', fontSize=7.5, leading=10,
+        textColor=colors.HexColor('#333333'), alignment=4  # Justified text
+    )
+
+    disclaimer_text = (
+        "<b>Notice:</b> The Remaining Useful Life (RUL) projections and threshold breach dates generated in this report "
+        "are statistical estimations derived from mathematical regression modeling on historical rod drop trend data. "
+        "Actual rider ring wear rates in reciprocating compressors are influenced by operational variables, including but "
+        "not limited to: process gas composition/purity, differential pressure ratios, lubrication efficiency, thermal "
+        "expansion, rod alignment variations, and compressor duty cycle changes.<br/><br/>"
+        "This prognostic analysis should serve solely as an engineering decision-support guideline for proactive maintenance "
+        "planning and should be validated alongside other analysis and monitoring approach."
+    )
+
+    # Put text inside a subtle framed callout box
+    disclaimer_table = Table([[Paragraph(disclaimer_text, disclaimer_style)]], colWidths=[TARGET_WIDTH])
+    disclaimer_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8F9FA')),
+        ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#4A777A')),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+    ]))
+
+    story.append(disclaimer_table)
 
     doc.build(story)
 
