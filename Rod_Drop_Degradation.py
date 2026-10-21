@@ -34,7 +34,6 @@ st.caption(
 # ==========================================
 st.sidebar.header("1. Asset Information & Data Source")
 
-# Added Complex & Asset Tag Inputs
 COMPLEX_NAME = st.sidebar.text_input("Complex / Plant Name", value="Complex A")
 ASSET_TAG = st.sidebar.text_input("Asset Tag / Name", value="C1234")
 
@@ -100,7 +99,6 @@ else:  # Sample Data Mode
     MIN_CLEARANCE = st.sidebar.number_input("Minimum Allowable Clearance / OEM Limit [mm]", value=0.300, step=0.001, format="%.3g")
     CONFIDENCE_PCT = st.sidebar.number_input("Confidence Level Analysis [%]", value=95.0, min_value=50.0, max_value=99.9, step=1.0)
 
-    # Generate Synthetic Data degrading from ~2.5 mm down to ~1.4 mm clearance (~1100 um total wear)
     np.random.seed(42)
     n_points = 20
     dates = pd.date_range(end=datetime.now(), periods=n_points, freq='30D')
@@ -206,36 +204,29 @@ best_name = auto_best if selected_model_option == "Auto (Select Best R²)" else 
 best = model_results[best_name]
 
 # ==========================================
-# 3.1 WEAR RATE CALCULATIONS
+# 3.1 SINGLE MAIN WEAR RATE CALCULATION
 # ==========================================
 total_days_elapsed = days[-1] if len(days) > 1 and days[-1] > 0 else 1.0
 
-# 1. Average Historical Wear Rate
-avg_wear_rate_um_day = latest_wear_um / total_days_elapsed
-avg_wear_rate_mm_year = (avg_wear_rate_um_day * 365.25) / 1000.0
-avg_wear_rate_um_khrs = (avg_wear_rate_um_day / 24.0) * 1000.0
-
-# 2. Current Instantaneous Wear Rate (Derivative of selected model at t_latest)
+# Instantaneous Wear Rate at latest timestamp (d/dt of fitted model at t_latest)
 def get_current_wear_rate(model, t_latest):
     func, popt = model["func"], model["popt"]
-    dt = 1e-4  # Delta t for numerical derivative
+    dt = 1e-4
     rate_um_day = (func(t_latest + dt, *popt) - func(t_latest, *popt)) / dt
     return max(0.0, rate_um_day)
 
 current_wear_rate_um_day = get_current_wear_rate(best, days[-1])
-current_wear_rate_mm_year = (current_wear_rate_um_day * 365.25) / 1000.0
-current_wear_rate_um_khrs = (current_wear_rate_um_day / 24.0) * 1000.0
+current_wear_rate_um_khrs = (current_wear_rate_um_day / 24.0) * 1000.0  # Main Industry Standard Unit
+current_wear_rate_mm_year = (current_wear_rate_um_day * 365.25) / 1000.0  # Secondary Unit
 
 # ==========================================
 # 4. EXPLANATION & FIT METRICS DISPLAY
 # ==========================================
 st.subheader(f"📊 Model Comparison & Fit Metrics{asset_title_suffix}")
 
-with st.expander("💡 Technical Guidance: Metrics, Wear Rates, RUL & Model Selection Guide"):
+with st.expander("💡 Technical Guidance: Metrics, Wear Rate & Model Selection Guide"):
     st.markdown("""
-    * **Wear Rate Metrics:**
-        * **Average Historical Wear Rate:** Total recorded rider ring wear divided by total operating days since baseline measurement ($$\\mu\\text{m/day}$$ or $$\\text{mm/year}$$).
-        * **Current Projected Wear Rate:** The instantaneous rate of wear ($$\\frac{d\\text{Wear}}{dt}$$) predicted by the selected model at the latest dataset timestamp.
+    * **Current Wear Rate:** The instantaneous physical wear rate ($$\\frac{d\\text{Wear}}{dt}$$) calculated at the last recorded timestamp using the fitted mathematical model. Expressed in **$$\\mu\\text{m / 1000 hours}$$** (OEM standard) and **$$\\text{mm / year}$$**.
     * **Remaining Useful Life (RUL):** The estimated operational time remaining before rider ring wear breaches an alarm threshold or minimum clearance limit.
       $$\\text{RUL (Days)} = \\text{Expected Breach Date} - \\text{Last Observed Data Date}$$
     * **Residual Standard Deviation (Residual Std in µm):** Measures physical noise between actual rod drop readings and fitted model predictions. Lower values signify higher accuracy.
@@ -282,7 +273,9 @@ f_L = solve_crossing(best, WEAR_TARGET_L, CONFIDENCE_PCT, max_horizon)
 f_LL = solve_crossing(best, WEAR_TARGET_LL, CONFIDENCE_PCT, max_horizon)
 f_Min = solve_crossing(best, WEAR_TARGET_MIN, CONFIDENCE_PCT, max_horizon)
 
-st.subheader("⚡ Operational Metrics & Wear Rate Summary")
+st.subheader("⚡ Current Operational Status & Wear Rate")
+
+# Row 1: Key Asset Metrics
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Selected Model", f"{best_name}", f"R² = {best['r2'] *100:.2f}%")
 m2.metric("Current Probe Position", f"{latest_raw_um:.1f} µm")
@@ -290,11 +283,20 @@ m3.metric("Current Clearance", f"{latest_clearance_mm:.3f} mm")
 m4.metric("Min Historical Clearance", f"{min_hist_clearance_mm:.3f} mm")
 m5.metric("Confidence Level", f"{CONFIDENCE_PCT:.1f}%")
 
-w1, w2, w3, w4 = st.columns(4)
-w1.metric("Avg Historical Wear Rate", f"{avg_wear_rate_um_day:.2f} µm/day", f"{avg_wear_rate_mm_year:.3f} mm/year")
-w2.metric("Current Model Wear Rate", f"{current_wear_rate_um_day:.2f} µm/day", f"{current_wear_rate_mm_year:.3f} mm/year")
-w3.metric("Wear Rate (per 1000 hrs)", f"{current_wear_rate_um_khrs:.2f} µm/khrs")
-w4.metric("Total Operating Time", f"{int(total_days_elapsed)} Days", f"{(total_days_elapsed * 24):,.0f} Hours")
+# Row 2: Clean Single Wear Rate Metric & Operating Hours
+w1, w2 = st.columns(2)
+w1.metric(
+    label="Current Wear Rate (at latest date)",
+    value=f"{current_wear_rate_um_khrs:.2f} µm / 1000 hrs",
+    delta=f"Equivalent: {current_wear_rate_mm_year:.3f} mm/year ({current_wear_rate_um_day:.2f} µm/day)",
+    delta_color="off"
+)
+w2.metric(
+    label="Total Asset Operating Time",
+    value=f"{int(total_days_elapsed)} Days",
+    delta=f"Accumulated: {(total_days_elapsed * 24):,.0f} Hours",
+    delta_color="off"
+)
 
 st.subheader("📋 Prognostic Breach & RUL Projection Summary")
 prognosis_data = []
@@ -508,8 +510,8 @@ def generate_pdf_report(filename):
     story.append(t_spec)
     story.append(Spacer(1, 6))
 
-    # SECTION 2: CURRENT OPERATIONAL STATUS & WEAR RATES
-    story.append(Paragraph("2. CURRENT OPERATIONAL STATUS & WEAR RATES", section_style))
+    # SECTION 2: CURRENT OPERATIONAL STATUS & WEAR RATE
+    story.append(Paragraph("2. CURRENT OPERATIONAL STATUS & WEAR RATE", section_style))
     ll_rul_str = next((r["RUL (Days)"] for r in prognosis_data if r["Threshold Level"] == "LL Alarm"), "N/A")
     status_data = [
         [Paragraph("Metric Description", hdr_style_l), Paragraph("Value", hdr_style), Paragraph("Unit / Info", hdr_style)],
@@ -517,9 +519,7 @@ def generate_pdf_report(filename):
         [Paragraph("Latest Raw Probe Reading", body_style_l), Paragraph(f"{latest_raw_um:.1f}", body_style), Paragraph("um", body_style)],
         [Paragraph("Current Estimated Clearance", body_style_l), Paragraph(f"{latest_clearance_mm:.3f}", body_style), Paragraph("mm", body_style)],
         [Paragraph("Minimum Historical Clearance Recorded", body_style_l), Paragraph(f"{min_hist_clearance_mm:.3f}", body_style), Paragraph("mm", body_style)],
-        [Paragraph("Average Historical Wear Rate", body_style_l), Paragraph(f"{avg_wear_rate_um_day:.2f}", body_style), Paragraph(f"um/day ({avg_wear_rate_mm_year:.3f} mm/yr)", body_style)],
-        [Paragraph("Current Projected Wear Rate", body_style_l), Paragraph(f"{current_wear_rate_um_day:.2f}", body_style), Paragraph(f"um/day ({current_wear_rate_mm_year:.3f} mm/yr)", body_style)],
-        [Paragraph("Projected Wear Rate (per 1000 hrs)", body_style_l), Paragraph(f"{current_wear_rate_um_khrs:.2f}", body_style), Paragraph("um/1000 hrs", body_style)],
+        [Paragraph("Current Wear Rate (Latest Timestamp)", body_style_l), Paragraph(f"{current_wear_rate_um_khrs:.2f}", body_style), Paragraph(f"um/1000 hrs ({current_wear_rate_mm_year:.3f} mm/yr)", body_style)],
         [Paragraph("Estimated RUL to LL Alarm", body_style_l), Paragraph(f"{ll_rul_str}", body_style), Paragraph(f"Fit Model: {best_name}", body_style)]
     ]
     t_status = Table(status_data, colWidths=[300, 120, 120])
