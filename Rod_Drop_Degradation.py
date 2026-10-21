@@ -226,6 +226,8 @@ st.subheader(f"📊 Model Comparison & Fit Metrics{asset_title_suffix}")
 with st.expander("💡 Technical Guidance: Metrics, Wear Rate & Model Selection Guide"):
     st.markdown("""
     * **Current Wear Rate:** The physical wear rate ($$\\frac{d\\text{Wear}}{dt}$$) calculated at the latest data timestamp using the fitted mathematical model. Expressed in **$$\\mu\\text{m / day}$$** and **$$\\text{mm / year}$$**.
+    * **Total Asset Operating Time:** Represents the total elapsed duration (in days) from the earliest recorded timestamp to the latest timestamp within the provided dataset.
+    * **Accumulated Hours:** Refers to the direct unit conversion of the total operating days into cumulative operating hours ($$\\text{Total Days} \\times 24\\text{ hours}$$) to align with standard machinery runtime tracking.
     * **Remaining Useful Life (RUL):** The estimated operational time remaining before rider ring wear breaches an alarm threshold or minimum clearance limit.
       $$\\text{RUL (Days)} = \\text{Expected Breach Date} - \\text{Last Observed Data Date}$$
     * **Residual Standard Deviation (Residual Std in µm):** Measures physical noise between actual rod drop readings and fitted model predictions. Lower values signify higher accuracy.
