@@ -204,11 +204,11 @@ best_name = auto_best if selected_model_option == "Auto (Select Best R²)" else 
 best = model_results[best_name]
 
 # ==========================================
-# 3.1 SINGLE MAIN WEAR RATE CALCULATION
+# 3.1 WEAR RATE CALCULATION (PER DAY / YEAR)
 # ==========================================
 total_days_elapsed = days[-1] if len(days) > 1 and days[-1] > 0 else 1.0
 
-# Instantaneous Wear Rate at latest timestamp (d/dt of fitted model at t_latest)
+# Wear Rate at latest timestamp (d/dt of fitted model at t_latest)
 def get_current_wear_rate(model, t_latest):
     func, popt = model["func"], model["popt"]
     dt = 1e-4
@@ -216,8 +216,7 @@ def get_current_wear_rate(model, t_latest):
     return max(0.0, rate_um_day)
 
 current_wear_rate_um_day = get_current_wear_rate(best, days[-1])
-current_wear_rate_um_khrs = (current_wear_rate_um_day / 24.0) * 1000.0  # Main Industry Standard Unit
-current_wear_rate_mm_year = (current_wear_rate_um_day * 365.25) / 1000.0  # Secondary Unit
+current_wear_rate_mm_year = (current_wear_rate_um_day * 365.25) / 1000.0
 
 # ==========================================
 # 4. EXPLANATION & FIT METRICS DISPLAY
@@ -226,7 +225,7 @@ st.subheader(f"📊 Model Comparison & Fit Metrics{asset_title_suffix}")
 
 with st.expander("💡 Technical Guidance: Metrics, Wear Rate & Model Selection Guide"):
     st.markdown("""
-    * **Current Wear Rate:** The instantaneous physical wear rate ($$\\frac{d\\text{Wear}}{dt}$$) calculated at the last recorded timestamp using the fitted mathematical model. Expressed in **$$\\mu\\text{m / 1000 hours}$$** (OEM standard) and **$$\\text{mm / year}$$**.
+    * **Current Wear Rate:** The physical wear rate ($$\\frac{d\\text{Wear}}{dt}$$) calculated at the latest data timestamp using the fitted mathematical model. Expressed in **$$\\mu\\text{m / day}$$** and **$$\\text{mm / year}$$**.
     * **Remaining Useful Life (RUL):** The estimated operational time remaining before rider ring wear breaches an alarm threshold or minimum clearance limit.
       $$\\text{RUL (Days)} = \\text{Expected Breach Date} - \\text{Last Observed Data Date}$$
     * **Residual Standard Deviation (Residual Std in µm):** Measures physical noise between actual rod drop readings and fitted model predictions. Lower values signify higher accuracy.
@@ -283,12 +282,12 @@ m3.metric("Current Clearance", f"{latest_clearance_mm:.3f} mm")
 m4.metric("Min Historical Clearance", f"{min_hist_clearance_mm:.3f} mm")
 m5.metric("Confidence Level", f"{CONFIDENCE_PCT:.1f}%")
 
-# Row 2: Clean Single Wear Rate Metric & Operating Hours
+# Row 2: Single Wear Rate Metric & Operating Time
 w1, w2 = st.columns(2)
 w1.metric(
     label="Current Wear Rate (at latest date)",
-    value=f"{current_wear_rate_um_khrs:.2f} µm / 1000 hrs",
-    delta=f"Equivalent: {current_wear_rate_mm_year:.3f} mm/year ({current_wear_rate_um_day:.2f} µm/day)",
+    value=f"{current_wear_rate_um_day:.2f} µm / day",
+    delta=f"Equivalent: {current_wear_rate_mm_year:.3f} mm/year",
     delta_color="off"
 )
 w2.metric(
@@ -519,7 +518,7 @@ def generate_pdf_report(filename):
         [Paragraph("Latest Raw Probe Reading", body_style_l), Paragraph(f"{latest_raw_um:.1f}", body_style), Paragraph("um", body_style)],
         [Paragraph("Current Estimated Clearance", body_style_l), Paragraph(f"{latest_clearance_mm:.3f}", body_style), Paragraph("mm", body_style)],
         [Paragraph("Minimum Historical Clearance Recorded", body_style_l), Paragraph(f"{min_hist_clearance_mm:.3f}", body_style), Paragraph("mm", body_style)],
-        [Paragraph("Current Wear Rate (Latest Timestamp)", body_style_l), Paragraph(f"{current_wear_rate_um_khrs:.2f}", body_style), Paragraph(f"um/1000 hrs ({current_wear_rate_mm_year:.3f} mm/yr)", body_style)],
+        [Paragraph("Current Wear Rate (Latest Timestamp)", body_style_l), Paragraph(f"{current_wear_rate_um_day:.2f}", body_style), Paragraph(f"um/day ({current_wear_rate_mm_year:.3f} mm/yr)", body_style)],
         [Paragraph("Estimated RUL to LL Alarm", body_style_l), Paragraph(f"{ll_rul_str}", body_style), Paragraph(f"Fit Model: {best_name}", body_style)]
     ]
     t_status = Table(status_data, colWidths=[300, 120, 120])
