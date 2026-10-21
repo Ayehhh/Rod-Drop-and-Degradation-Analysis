@@ -333,7 +333,7 @@ st.caption(
     "not limited to: process gas composition/purity, differential pressure ratios, lubrication efficiency, thermal "
     "expansion, rod alignment variations, and compressor duty cycle changes."
     "These projections serve as a decision-support guideline for proactive maintenance alongside physical inspections and condition monitoring."
-
+)
 # ==========================================
 # 6. VISUALIZATION WITH BREACH MARKERS
 # ==========================================
