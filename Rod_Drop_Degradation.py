@@ -331,7 +331,7 @@ st.caption(
     "⚠️ **Disclaimer:** The Remaining Useful Life (RUL) projections and breach dates are model-based estimations "
     "derived from historical trend analysis. Actual rider ring wear rate is influenced by operational variables, including but "
     "not limited to: process gas composition/purity, differential pressure ratios, lubrication efficiency, thermal "
-    "expansion, rod alignment variations, and compressor duty cycle changes."
+    "expansion, rod alignment variations, and compressor duty cycle changes. "
     "These projections serve as a decision-support guideline for proactive maintenance alongside physical inspections and condition monitoring."
 )
 # ==========================================
